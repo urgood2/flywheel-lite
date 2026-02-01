@@ -78,12 +78,13 @@
         .step { display: flex; align-items: flex-start; gap: 0.75rem; }
         .step-num { background: var(--accent-purple); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
         .step-num.cyan { background: var(--accent-cyan); }
+        .step-num.green { background: var(--accent-green); }
         @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } body { padding: 1rem; } }
     </style>
 </head>
 <body>
     <h1>🎮 Agent Flywheel Cheat Sheet</h1>
-    <p class="subtitle">Flywheel-Lite Workflow • Background Execution • Beads Task Management</p>
+    <p class="subtitle">Flywheel-Lite Workflow • Background Execution • Multi-Project Support</p>
     <div class="verified">✅ All commands verified • Updated Feb 2026</div>
     
     <div class="grid">
@@ -97,9 +98,41 @@
                 <div class="step"><span class="step-num cyan">4</span><div><code>flywheel plan --rounds 2</code><br><span class="cmt">Interview</span></div></div>
                 <div class="step"><span class="step-num cyan">5</span><div><code>flywheel refine --max 5 --bg</code><br><span class="cmt">Background refine</span></div></div>
                 <div class="step"><span class="step-num cyan">6</span><div><code>flywheel beads</code><br><span class="cmt">Plan → Tasks</span></div></div>
-                <div class="step"><span class="step-num cyan">7</span><div><code>flywheel startwork --cc 3</code><br><span class="cmt">Spawn swarm</span></div></div>
+                <div class="step"><span class="step-num cyan">7</span><div><code>fwsw --cc 3</code><br><span class="cmt">Spawn swarm</span></div></div>
                 <div class="step"><span class="step-num cyan">8</span><div><code>ntm attach myrepo</code><br><span class="cmt">Work</span></div></div>
             </div>
+        </div>
+
+        <!-- MULTI-PROJECT WORKFLOW -->
+        <div class="card quick-ref full-width blue">
+            <h2><span class="icon">🔀</span> Multi-Project Workflow</h2>
+            <div class="workflow-grid">
+                <div class="step"><span class="step-num green">1</span><div><strong>Project A</strong><br><code>cd /data/projects/proj-a && fwsw --cc 2</code></div></div>
+                <div class="step"><span class="step-num green">2</span><div><strong>Project B</strong><br><code>cd /data/projects/proj-b && fwsw --cc 2</code></div></div>
+                <div class="step"><span class="step-num green">3</span><div><strong>Monitor</strong><br><code>fwj && ntm list</code></div></div>
+                <div class="step"><span class="step-num green">4</span><div><strong>Switch</strong><br><code>ntm attach proj-a</code> / <kbd>Ctrl+B D</kbd></div></div>
+            </div>
+            <h3>Sync All Projects</h3>
+            <pre><span class="cmt"># Quick sync all worktrees</span>
+<span class="cmd">for</span> d <span class="cmd">in</span> /data/projects/roguelike-{1,2,3}; <span class="cmd">do</span> (cd "$d" && <span class="cmd">fws</span>); <span class="cmd">done</span></pre>
+        </div>
+
+        <!-- SHELL ALIASES -->
+        <div class="card green">
+            <h2><span class="icon">⚡</span> Shell Aliases</h2>
+            <table>
+                <tr><td><code>fw</code></td><td>flywheel</td></tr>
+                <tr><td><code>fws</code></td><td>flywheel sync</td></tr>
+                <tr><td><code>fwf</code></td><td>flywheel finalize</td></tr>
+                <tr><td><code>fwsw</code></td><td>flywheel startwork</td></tr>
+                <tr><td><code>fwq</code></td><td>flywheel qa</td></tr>
+                <tr><td><code>fwn</code></td><td>flywheel nudge</td></tr>
+                <tr><td><code>fwj</code></td><td>flywheel jobs</td></tr>
+            </table>
+            <h3>Quick Actions</h3>
+            <pre><span class="cmd">fws</span>   <span class="cmt"># Sync to remote (handles branch mismatches)</span>
+<span class="cmd">fwf</span>   <span class="cmt"># Commit checkpoint only</span>
+<span class="cmd">fwn</span>   <span class="cmt"># Nudge idle agents</span></pre>
         </div>
 
         <!-- FLYWHEEL COMMANDS -->
@@ -110,10 +143,10 @@
 <span class="cmd">flywheel init</span>                 <span class="cmt"># Bootstrap repo</span>
 <span class="cmd">flywheel checkout</span> <span class="arg">feat/x</span> main</pre>
             
-            <h3>Planning</h3>
+            <h3>Planning (--max = until approved)</h3>
             <pre><span class="cmd">flywheel plan</span> <span class="flag">--rounds 2</span>
-<span class="cmd">flywheel refine</span> <span class="flag">--iters 3</span>      <span class="cmt"># Until approved</span>
-<span class="cmd">flywheel refine</span> <span class="flag">--iters 3 --bg</span> <span class="cmt"># Background</span>
+<span class="cmd">flywheel refine</span> <span class="flag">--max 5</span>        <span class="cmt"># Until approved</span>
+<span class="cmd">flywheel refine</span> <span class="flag">--max 5 --bg</span>   <span class="cmt"># Background</span>
 <span class="cmd">flywheel beads</span> <span class="flag">--min-beads 50</span></pre>
             
             <h3>Execution</h3>
@@ -121,65 +154,41 @@
         </div>
 
         <!-- BACKGROUND JOBS -->
-        <!-- SHELL ALIASES -->
-        <div class="card green">
-            <h2><span class="icon">⚡</span> Shell Aliases</h2>
-            <h3>Quick Commands</h3>
-            <table>
-                <tr><td><code>fw</code></td><td>flywheel</td></tr>
-                <tr><td><code>fws</code></td><td>flywheel sync</td></tr>
-                <tr><td><code>fwf</code></td><td>flywheel finalize</td></tr>
-                <tr><td><code>fwsw</code></td><td>flywheel startwork</td></tr>
-                <tr><td><code>fwq</code></td><td>flywheel qa</td></tr>
-                <tr><td><code>fwn</code></td><td>flywheel nudge</td></tr>
-                <tr><td><code>fwj</code></td><td>flywheel jobs</td></tr>
-            </table>
-            <h3>Sync & Finalize</h3>
-            <pre><span class="cmd">fws</span>                           <span class="cmt"># Sync to remote</span>
-<span class="cmd">fwf</span>                           <span class="cmt"># Commit checkpoint only</span></pre>
-        </div>
         <div class="card cyan">
-            <h2><span class="icon">⏳</span> Background Jobs (NEW)</h2>
+            <h2><span class="icon">⏳</span> Background Jobs</h2>
             <h3>Run Refine in Background</h3>
-            <pre><span class="cmd">flywheel refine</span> <span class="flag">--iters 3 --bg</span>
-<span class="cmt"># Returns immediately, runs in tmux</span></pre>
+            <pre><span class="cmd">flywheel refine</span> <span class="flag">--max 5 --bg</span>
+<span class="cmt"># Returns immediately, stays open for attach</span></pre>
             
             <h3>Manage Jobs</h3>
-            <pre><span class="cmd">flywheel jobs</span>                 <span class="cmt"># List jobs</span>
-<span class="cmd">flywheel logs</span> <span class="arg">refine-repo-123</span> <span class="cmt"># Tail log</span>
-<span class="cmd">flywheel attach</span> <span class="arg">refine-repo-123</span> <span class="cmt"># Attach</span></pre>
+            <pre><span class="cmd">fwj</span>                           <span class="cmt"># List jobs</span>
+<span class="cmd">flywheel attach</span> <span class="arg">refine-repo-123</span> <span class="cmt"># Attach</span>
+<span class="cmd">flywheel logs</span>                 <span class="cmt"># Tail log</span></pre>
             
-            <h3>Run Multiple Simultaneously</h3>
-            <pre><span class="cmd">cd</span> /data/projects/proj1
-<span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
-<span class="cmd">cd</span> /data/projects/proj2
-<span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
-<span class="cmd">flywheel jobs</span>  <span class="cmt"># See both running</span></pre>
+            <h3>Multiple Projects</h3>
+            <pre><span class="cmd">cd</span> /data/projects/proj1 && <span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
+<span class="cmd">cd</span> /data/projects/proj2 && <span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
+<span class="cmd">fwj</span>  <span class="cmt"># See both running</span></pre>
+            <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent-green);">✨ Sessions stay open after completion for review</p>
         </div>
 
         <!-- VIEWING BEADS -->
         <div class="card pink">
             <h2><span class="icon">👁️</span> Viewing Beads</h2>
-            <h3>List All Beads</h3>
+            <h3>List Beads</h3>
             <pre><span class="cmd">br list</span>                       <span class="cmt"># All issues</span>
 <span class="cmd">br list</span> <span class="flag">--status=open</span>          <span class="cmt"># Open only</span>
 <span class="cmd">br list</span> <span class="flag">--status=in_progress</span>   <span class="cmt"># In progress</span>
-<span class="cmd">br list</span> <span class="flag">-t epic</span>                <span class="cmt"># Epics only</span>
-<span class="cmd">br list</span> <span class="flag">-t task</span>                <span class="cmt"># Tasks only</span></pre>
-            
-            <h3>Ready / Blocked</h3>
-            <pre><span class="cmd">br ready</span>                      <span class="cmt"># Unblocked, ready</span>
-<span class="cmd">br ready</span> <span class="flag">--limit 0</span>             <span class="cmt"># All ready</span>
-<span class="cmd">br blocked</span>                    <span class="cmt"># Blocked issues</span></pre>
+<span class="cmd">br ready</span>                      <span class="cmt"># Unblocked, ready</span></pre>
             
             <h3>View Details</h3>
             <pre><span class="cmd">br show</span> <span class="arg">bd-abc123</span>             <span class="cmt"># Single bead</span>
-<span class="cmd">br show</span> <span class="arg">bd-abc bd-def</span>         <span class="cmt"># Multiple</span>
 <span class="cmd">br graph</span> <span class="flag">--all</span>                 <span class="cmt"># Dependency graph</span>
-<span class="cmd">br graph</span> <span class="arg">bd-abc</span>                <span class="cmt"># Graph from root</span></pre>
+<span class="cmd">bv</span>                            <span class="cmt"># Interactive TUI</span></pre>
             
-            <h3>Interactive TUI</h3>
-            <pre><span class="cmd">bv</span>                            <span class="cmt"># Full board TUI</span></pre>
+            <h3>AI Triage</h3>
+            <pre><span class="cmd">bv</span> <span class="flag">--robot-triage</span>             <span class="cmt"># JSON priorities</span>
+<span class="cmd">bv</span> <span class="flag">--robot-next</span>               <span class="cmt"># Top pick only</span></pre>
         </div>
 
         <!-- WORKING WITH BEADS -->
@@ -188,32 +197,25 @@
             <h3>Create</h3>
             <pre><span class="cmd">br create</span> <span class="str">"Task title"</span> <span class="flag">-t</span> task <span class="flag">-p</span> 2
 <span class="cmd">br create</span> <span class="str">"Bug title"</span> <span class="flag">-t</span> bug <span class="flag">-p</span> 1
-<span class="cmd">br create</span> <span class="str">"Epic"</span> <span class="flag">-t</span> epic <span class="flag">-p</span> 0
 <span class="cmd">br q</span> <span class="str">"Quick note"</span>              <span class="cmt"># Fast capture</span></pre>
-            
-            <h3>Priority: 0=Critical → 4=Backlog</h3>
             
             <h3>Update Status</h3>
             <pre><span class="cmd">br update</span> <span class="arg">bd-xxx</span> <span class="flag">--status=in_progress</span>
-<span class="cmd">br update</span> <span class="arg">bd-xxx</span> <span class="flag">--status=blocked</span>
 <span class="cmd">br close</span> <span class="arg">bd-xxx</span>
 <span class="cmd">br reopen</span> <span class="arg">bd-xxx</span></pre>
             
             <h3>Dependencies</h3>
-            <pre><span class="cmd">br dep add</span> <span class="arg">bd-child</span> <span class="arg">bd-parent</span> <span class="cmt"># child depends on parent</span>
-<span class="cmd">br dep list</span> <span class="arg">bd-xxx</span>
+            <pre><span class="cmd">br dep add</span> <span class="arg">bd-child</span> <span class="arg">bd-parent</span>
 <span class="cmd">br dep tree</span> <span class="arg">bd-xxx</span></pre>
-            
-            <h3>AI Triage</h3>
-            <pre><span class="cmd">bv</span> <span class="flag">--robot-triage</span>             <span class="cmt"># JSON priorities</span>
-<span class="cmd">bv</span> <span class="flag">--robot-next</span>               <span class="cmt"># Top pick only</span></pre>
         </div>
 
         <!-- SPAWNING -->
         <div class="card green">
             <h2><span class="icon">🚀</span> Spawn Agents</h2>
             <pre><span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2</span>
-<span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2 --cod=1 --gmi=1</span></pre>
+<span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2 --cod=1 --gmi=1</span>
+<span class="cmt"># Or use alias:</span>
+<span class="cmd">fwsw</span> <span class="flag">--cc 3 --cod 2</span></pre>
             
             <h3>Agent Flags</h3>
             <table>
@@ -229,7 +231,6 @@
             <pre><span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="str">"prompt"</span>       <span class="cmt"># All agents</span>
 <span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="flag">--pane=2</span> <span class="str">"msg"</span> <span class="cmt"># Specific pane</span>
 <span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="flag">--cc=</span> <span class="str">"msg"</span>    <span class="cmt"># Claude only</span>
-<span class="cmd">echo</span> <span class="str">"msg"</span> | <span class="cmd">ntm send</span> <span class="arg">myrepo</span>  <span class="cmt"># Via pipe</span>
 <span class="cmd">ntm interrupt</span> <span class="arg">myrepo</span>          <span class="cmt"># Stop all</span></pre>
         </div>
 
@@ -238,15 +239,16 @@
             <h2><span class="icon">🖥️</span> Sessions</h2>
             <pre><span class="cmd">ntm list</span>                       <span class="cmt"># All sessions</span>
 <span class="cmd">ntm status</span> <span class="arg">myrepo</span>              <span class="cmt"># Detailed info</span>
-<span class="cmd">ntm attach</span> <span class="arg">myrepo</span>              <span class="cmt"># Enter</span>
+<span class="cmd">ntm attach</span> <span class="arg">myrepo</span>              <span class="cmt"># Enter session</span>
 <span class="cmd">ntm view</span> <span class="arg">myrepo</span>                <span class="cmt"># Tile panes</span>
 <span class="cmd">echo</span> y | <span class="cmd">ntm kill</span> <span class="arg">myrepo</span>      <span class="cmt"># Kill</span></pre>
             
             <h3>Tmux Hotkeys</h3>
             <table>
-                <tr><td><kbd>Ctrl+b</kbd> <kbd>d</kbd></td><td>Detach</td></tr>
-                <tr><td><kbd>Ctrl+b</kbd> <kbd>z</kbd></td><td>Zoom pane</td></tr>
-                <tr><td><kbd>Ctrl+b</kbd> <kbd>[</kbd></td><td>Scroll</td></tr>
+                <tr><td><kbd>Ctrl+B</kbd> <kbd>D</kbd></td><td>Detach (keeps running)</td></tr>
+                <tr><td><kbd>Ctrl+B</kbd> <kbd>Z</kbd></td><td>Zoom pane</td></tr>
+                <tr><td><kbd>Ctrl+B</kbd> <kbd>[</kbd></td><td>Scroll mode</td></tr>
+                <tr><td><kbd>Ctrl+B</kbd> <kbd>1-9</kbd></td><td>Switch pane</td></tr>
             </table>
         </div>
 
@@ -269,15 +271,16 @@
 <span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2</span></pre>
                 </div>
                 <div>
-                    <h3>ntm send Race Condition</h3>
-                    <pre><span class="cmt"># Wait 3s or use --pane=N</span>
-<span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="flag">--pane=2</span> <span class="str">"msg"</span></pre>
+                    <h3>Push Branch Mismatch</h3>
+                    <pre><span class="cmt"># fws handles automatically:</span>
+<span class="cmt"># local-branch → origin/different-name</span>
+<span class="cmd">fws</span>  <span class="cmt"># Just works™</span></pre>
                 </div>
                 <div>
-                    <h3>View Background Job Log</h3>
-                    <pre><span class="cmd">flywheel logs</span>
-<span class="cmt"># Or:</span>
-<span class="cmd">tail -f</span> planning/.refine-*.log</pre>
+                    <h3>View Background Job</h3>
+                    <pre><span class="cmd">flywheel attach</span> <span class="arg">refine-xxx</span>
+<span class="cmt"># Or tail the log:</span>
+<span class="cmd">flywheel logs</span></pre>
                 </div>
                 <div>
                     <h3>Kill Stuck Job</h3>
@@ -291,16 +294,16 @@
             <h2><span class="icon">⚠️</span> Key Syntax</h2>
             <table>
                 <tr><th>Action</th><th>✅ Correct</th><th>❌ Wrong</th></tr>
-                <tr><td>Background refine</td><td><code>flywheel refine --bg</code></td><td><code>flywheel refine &</code></td></tr>
+                <tr><td>Background refine</td><td><code>flywheel refine --max 5 --bg</code></td><td><code>flywheel refine &</code></td></tr>
+                <tr><td>Until approved</td><td><code>flywheel refine --max 5</code></td><td><code>flywheel refine --iters 5</code> (legacy)</td></tr>
                 <tr><td>Send to Claude</td><td><code>ntm send S --cc= "msg"</code></td><td><code>ntm send S --cc "msg"</code></td></tr>
-                <tr><td>List beads</td><td><code>br list</code></td><td><code>bd list</code> (unless symlinked)</td></tr>
-                <tr><td>Session name</td><td><code>ntm spawn myrepo</code></td><td><code>ntm spawn myrepo-work</code></td></tr>
+                <tr><td>Sync to remote</td><td><code>fws</code></td><td><code>git push</code> (may fail on branch mismatch)</td></tr>
             </table>
         </div>
     </div>
     
     <footer style="text-align: center; margin-top: 2rem; color: var(--text-secondary); font-size: 0.85rem;">
-        ✅ Flywheel-Lite + Agent Flywheel v0.5.0 • <a href="https://github.com/urgood2/flywheel-lite" style="color: var(--accent-cyan);">GitHub</a>
+        ✅ Flywheel-Lite v0.6.0 • <a href="https://github.com/urgood2/flywheel-lite" style="color: var(--accent-cyan);">GitHub</a>
     </footer>
 </body>
 </html>
