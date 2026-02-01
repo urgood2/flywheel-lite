@@ -412,25 +412,29 @@ startwork() {
     done
   fi
   
-  # Send prompts to Codex agents
+  # Send prompts to Codex agents (needs delay between text and Enter)
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
     cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: bv --robot-next")
     for i in $(seq 1 "$cod_n"); do
       note "Sending prompt to Codex pane $pane"
-      tmux send-keys -t "${session}:1.${pane}" "$cod_prompt" Enter
+      tmux send-keys -t "${session}:1.${pane}" "$cod_prompt"
+      sleep 0.3
+      tmux send-keys -t "${session}:1.${pane}" Enter
       sleep 0.5
       pane=$((pane + 1))
     done
   fi
   
-  # Send prompts to Gemini agents
+  # Send prompts to Gemini agents (needs delay between text and Enter)
   if [[ "$gmi_n" -gt 0 ]]; then
     local gmi_prompt
     gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer. START: bv --robot-next")
     for i in $(seq 1 "$gmi_n"); do
       note "Sending prompt to Gemini pane $pane"
-      tmux send-keys -t "${session}:1.${pane}" "$gmi_prompt" Enter
+      tmux send-keys -t "${session}:1.${pane}" "$gmi_prompt"
+      sleep 0.3
+      tmux send-keys -t "${session}:1.${pane}" Enter
       sleep 0.5
       pane=$((pane + 1))
     done
@@ -574,8 +578,10 @@ nudge_agents() {
       if [[ "$pane_title" == *"cod"* ]]; then
         nudge_msg="You are an autonomous coding agent. Run: bv --robot-next to get your task, then implement it fully. Do NOT wait for confirmation - just code."
       fi
-      tmux send-keys -t "${session}:1.${pane}" "$nudge_msg" Enter
+      tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
+      tmux send-keys -t "${session}:1.${pane}" Enter
+      sleep 0.2
       nudged=$((nudged + 1))
     else
       note "  Skipping pane $pane - working"
