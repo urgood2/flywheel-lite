@@ -2,9 +2,26 @@
 set -euo pipefail
 
 # Flywheel-Lite with background execution + autonomous agent prompts
+# Enhanced with Oh-My-OpenCode prompt patterns
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
+
+# Load prompt from external file with variable substitution
+load_prompt() {
+  local name="$1"
+  local prompt_file="$HOME/.config/flywheel/prompts/${name}.md"
+  if [[ -f "$prompt_file" ]]; then
+    cat "$prompt_file"
+  else
+    echo ""
+  fi
+}
+
+# Get system prompt (base rules that apply to all agents)
+get_system_prompt() {
+  load_prompt "SYSTEM_PROMPT"
+}
 
 load_config() {
   local repo_root="${1:-}"
@@ -41,6 +58,15 @@ Usage:
 
 Options:
   --bg    Run refine in background tmux session
+
+Prompts:
+  External prompts loaded from ~/.config/flywheel/prompts/
+  - SYSTEM_PROMPT.md   Base rules for all agents
+  - INTERVIEW.md       Planning interview prompt
+  - AGENT_WORKER.md    Implementation agent prompt
+  - QA_AGENT.md        QA verification prompt
+  - DELEGATION_RULES.md Task delegation structure
+  - LIBRARIAN.md       External research pattern
 USAGE
 }
 
@@ -49,6 +75,18 @@ doctor() {
   for cmd in git tmux ntm bd bv apr ubs claude codex gemini; do require_cmd "$cmd"; done
   note "Running: ntm deps -v"
   ntm deps -v
+  note "Checking prompts..."
+  local prompts_dir="$HOME/.config/flywheel/prompts"
+  if [[ -d "$prompts_dir" ]]; then
+    local count
+    count=$(find "$prompts_dir" -name "*.md" 2>/dev/null | wc -l)
+    note "  Found $count prompt files in $prompts_dir"
+    for f in "$prompts_dir"/*.md; do
+      [[ -f "$f" ]] && note "    ✓ $(basename "$f")"
+    done
+  else
+    note "  ⚠️  No prompts dir: $prompts_dir"
+  fi
   note "OK: toolchain present."
 }
 
@@ -94,7 +132,29 @@ plan_session() {
   note "Spawning planning session: $session"
   ntm spawn "$session" --cc=1
   sleep 3
-  ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
+
+  # Load interview prompt from external file, with fallback
+  local interview_prompt
+  interview_prompt=$(load_prompt "INTERVIEW")
+  if [[ -z "$interview_prompt" ]]; then
+    interview_prompt="You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md."
+  else
+    # Substitute {rounds} placeholder
+    interview_prompt="${interview_prompt//\{rounds\}/$rounds}"
+  fi
+
+  # Prepend system prompt if available
+  local system_prompt
+  system_prompt=$(get_system_prompt)
+  if [[ -n "$system_prompt" ]]; then
+    interview_prompt="$system_prompt
+
+---
+
+$interview_prompt"
+  fi
+
+  ntm send "$session" --no-cass-check --all "$interview_prompt" || true
   note "Attaching..."
   ntm attach "$session"
 }
@@ -119,10 +179,10 @@ refine_plan() {
     local job_name="refine-$(basename "$root")-$(date +%H%M%S)"
     local log_file="$root/planning/.refine-${job_name}.log"
     local wrapper="/tmp/fw-refine-${job_name}.sh"
-    
+
     note "Starting background job: $job_name"
     note "Log: $log_file"
-    
+
     # Wrapper script stays open after completion for review
     cat > "$wrapper" << 'FWWRAP'
 #!/bin/bash
@@ -141,13 +201,13 @@ echo "Session complete. Press Enter to close, or Ctrl+B D to detach..."
 read -r
 FWWRAP
     chmod +x "$wrapper"
-    
+
     tmux new-session -d -s "$job_name" "bash \"$wrapper\" \"$root\" \"$log_file\" \"$max_iters\" \"$plan_in\""
-    
+
     note "Background job started!"
     note "Commands:"
     note "  flywheel attach $job_name  # View progress"
-    note "  flywheel jobs              # List jobs" 
+    note "  flywheel jobs              # List jobs"
     note "  flywheel logs              # Tail log"
     return 0
   fi
@@ -232,6 +292,41 @@ make_beads() {
   echo "Then: bv --robot-triage"
 }
 
+# Build agent prompt with system rules prepended
+build_agent_prompt() {
+  local agent_type="$1"
+  local base_prompt="$2"
+
+  local system_prompt
+  system_prompt=$(get_system_prompt)
+
+  local worker_prompt
+  worker_prompt=$(load_prompt "AGENT_WORKER")
+
+  # Combine: system rules + worker template + agent-specific additions
+  local full_prompt=""
+
+  if [[ -n "$system_prompt" ]]; then
+    full_prompt="$system_prompt
+
+---
+
+"
+  fi
+
+  if [[ -n "$worker_prompt" ]]; then
+    full_prompt="${full_prompt}${worker_prompt}
+
+---
+
+"
+  fi
+
+  full_prompt="${full_prompt}${base_prompt}"
+
+  echo "$full_prompt"
+}
+
 startwork() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
@@ -249,50 +344,32 @@ startwork() {
   ntm spawn "$session" "${args[@]}"
   sleep 5
 
-  # AUTONOMOUS prompts - no questions, just work
+  # AUTONOMOUS prompts - enhanced with external system prompt
   if [[ "$cc_n" -gt 0 ]]; then
-    ntm send "$session" --no-cass-check --cc= "AUTONOMOUS MODE. You are an architect/integrator agent.
+    local cc_prompt
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Integrator
 
-CRITICAL RULES:
-- NEVER ask questions. NEVER wait for input. NEVER stop working.
-- After EVERY task completion, IMMEDIATELY run bv --robot-next again.
-- If no tasks available, wait 30 seconds then check again.
+You prefer cross-cutting work, refactors, and integration tasks.
+When picking beads, prioritize those that affect multiple files or require coordination.
 
-YOUR INFINITE LOOP:
-1. bv --robot-next
-2. br update <ID> --status=in_progress
-3. br show <ID>
-4. Implement (prefer cross-cutting work, refactors, integration)
-5. Run tests if applicable
-6. br close <ID>
-7. IMMEDIATELY go back to step 1. NEVER STOP.
-
-START NOW. Run: bv --robot-next" || true
+START NOW. Run: bv --robot-next")
+    ntm send "$session" --no-cass-check --cc= "$cc_prompt" || true
   fi
 
   if [[ "$cod_n" -gt 0 ]]; then
-    ntm send "$session" --no-cass-check --cod= "AUTONOMOUS MODE. You are an implementation agent.
+    local cod_prompt
+    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementation Specialist
 
-ABSOLUTE RULES (violation = failure):
+You focus on implementation tasks with tests.
+When picking beads, prioritize feature implementation and bug fixes.
+
+CODEX-SPECIFIC RULES:
 - NEVER output 'Next steps' - just DO the next step
-- NEVER ask questions or wait for input
-- NEVER stop after completing a task
-- NEVER suggest coordination - just work on available beads
-- After closing a bead, IMMEDIATELY run bv --robot-next
+- After closing a bead, echo 'CONTINUING...' && bv --robot-next
 
-YOUR INFINITE LOOP (run forever, no exceptions):
-1. bv --robot-next
-2. br update <ID> --status=in_progress
-3. br show <ID>
-4. Implement + write tests
-5. br close <ID>
-6. echo 'CONTINUING...' && bv --robot-next  <-- DO THIS, don't suggest it
-
-If bead is reserved by another agent, skip it: bv --robot-next
-If no beads available, sleep 30 && bv --robot-next
-
-START NOW: bv --robot-next" || true
-    # Codex needs explicit Enter key - panes are: 1=user, 2..cc_n+1=claude, cc_n+2..cc_n+cod_n+1=codex
+START NOW: bv --robot-next")
+    ntm send "$session" --no-cass-check --cod= "$cod_prompt" || true
+    # Codex needs explicit Enter key
     local cod_start=$((cc_n + 2))
     local cod_end=$((cc_n + cod_n + 1))
     for pane in $(seq "$cod_start" "$cod_end"); do
@@ -301,22 +378,16 @@ START NOW: bv --robot-next" || true
   fi
 
   if [[ "$gmi_n" -gt 0 ]]; then
-    ntm send "$session" --no-cass-check --gmi= "AUTONOMOUS MODE. You are a reviewer agent.
+    local gmi_prompt
+    gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer
 
-CRITICAL RULES:
-- NEVER ask questions. NEVER wait for input. NEVER stop working.
-- After EVERY task completion, IMMEDIATELY run bv --robot-next again.
-- If no tasks available, wait 30 seconds then check again.
+You focus on reviewing completed work for quality.
+When picking beads, prioritize review tasks.
+If you find issues, create new beads. If clean, add approval comment.
 
-YOUR INFINITE LOOP:
-1. bv --robot-next
-2. br show <ID>
-3. Review for edge cases, missing tests, bugs
-4. If issues: br create new beads. If clean: add approval comment.
-5. IMMEDIATELY go back to step 1. NEVER STOP.
-
-START NOW. Run: bv --robot-next" || true
-    # Gemini may also need explicit Enter - panes after codex
+START NOW. Run: bv --robot-next")
+    ntm send "$session" --no-cass-check --gmi= "$gmi_prompt" || true
+    # Gemini may also need explicit Enter
     local gmi_start=$((cc_n + cod_n + 2))
     local gmi_end=$((cc_n + cod_n + gmi_n + 1))
     for pane in $(seq "$gmi_start" "$gmi_end"); do
@@ -357,7 +428,7 @@ attach_job() {
 # Smart push that handles mismatched local/upstream branch names
 smart_push() {
   local current_branch upstream_ref upstream_remote upstream_branch
-  
+
   current_branch=$(git rev-parse --abbrev-ref HEAD)
   upstream_ref=$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null) || {
     # No upstream configured - push to same-named branch
@@ -365,11 +436,11 @@ smart_push() {
     git push -u origin "$current_branch"
     return $?
   }
-  
+
   # Extract remote and branch from upstream
   upstream_remote="${upstream_ref%%/*}"
   upstream_branch="${upstream_ref#*/}"
-  
+
   note "   Pushing $current_branch -> $upstream_remote/$upstream_branch"
   git push "$upstream_remote" "HEAD:$upstream_branch"
 }
@@ -449,10 +520,24 @@ run_qa() {
   # Kill existing QA session if exists
   tmux kill-session -t "$session" 2>/dev/null || true
 
-  # Create QA prompt file
-  local prompt_file="/tmp/flywheel-qa-prompt-$$.md"
-  cat > "$prompt_file" << 'QAPROMPT'
-You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps IN ORDER:
+  # Load QA prompt from external file with fallback
+  local qa_prompt
+  qa_prompt=$(load_prompt "QA_AGENT")
+
+  # Prepend system prompt
+  local system_prompt
+  system_prompt=$(get_system_prompt)
+  if [[ -n "$system_prompt" ]]; then
+    qa_prompt="$system_prompt
+
+---
+
+$qa_prompt"
+  fi
+
+  # Fallback if no external prompt
+  if [[ -z "$qa_prompt" ]] || [[ "$qa_prompt" == *"---"*"---"* && ${#qa_prompt} -lt 100 ]]; then
+    qa_prompt='You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps IN ORDER:
 
 1. Check project structure: ls -la && cat Justfile 2>/dev/null | head -30
 
@@ -473,21 +558,16 @@ You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps 
 
 8. Output: QA COMPLETE
 
-START NOW - run step 1.
-QAPROMPT
+START NOW - run step 1.'
+  fi
 
   # Create tmux session and launch claude, then send prompt
   tmux new-session -d -s "$session" -c "$root"
   tmux send-keys -t "$session" "cd '$root' && claude --dangerously-skip-permissions --model opus" Enter
   sleep 5
 
-  # Send the prompt (read from file)
-  local prompt
-  prompt=$(cat "$prompt_file")
-  rm -f "$prompt_file"
-
   # Use tmux send-keys with the prompt, then Enter separately
-  tmux send-keys -t "$session" "$prompt"
+  tmux send-keys -t "$session" "$qa_prompt"
   sleep 0.5
   tmux send-keys -t "$session" Enter
 
