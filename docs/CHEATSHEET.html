@@ -135,6 +135,47 @@
 <span class="cmd">fwn</span>   <span class="cmt"># Nudge idle agents</span></pre>
         </div>
 
+        <!-- PROMPT SYSTEM -->
+        <div class="card purple full-width">
+            <h2><span class="icon">📝</span> Prompt System (Oh-My-OpenCode)</h2>
+            <p style="margin-bottom: 1rem; color: var(--text-secondary);">External prompts in <code>~/.config/flywheel/prompts/</code></p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+                <div>
+                    <h3>Core Prompts</h3>
+                    <table>
+                        <tr><td><code>SYSTEM_PROMPT.md</code></td><td>Base rules for all agents</td></tr>
+                        <tr><td><code>AGENT_WORKER.md</code></td><td>Implementation work loop</td></tr>
+                        <tr><td><code>INTERVIEW.md</code></td><td>Planning interview</td></tr>
+                        <tr><td><code>QA_AGENT.md</code></td><td>QA checklist</td></tr>
+                    </table>
+                </div>
+                <div>
+                    <h3>Key Rules (SYSTEM_PROMPT)</h3>
+                    <table>
+                        <tr><td><span class="tag blue">Intent</span></td><td>Classify before acting</td></tr>
+                        <tr><td><span class="tag green">Evidence</span></td><td>Proof before complete</td></tr>
+                        <tr><td><span class="tag orange">3 Failures</span></td><td>STOP → REVERT → ESCALATE</td></tr>
+                    </table>
+                </div>
+                <div>
+                    <h3>7-Section Delegation</h3>
+                    <pre style="font-size: 0.75rem;"><span class="flag">1. TASK</span>: Atomic goal
+<span class="flag">2. EXPECTED OUTCOME</span>: Success criteria
+<span class="flag">3. SKILLS</span>: Required expertise
+<span class="flag">4. TOOLS</span>: Allowed commands
+<span class="flag">5. MUST DO</span>: Requirements
+<span class="flag">6. MUST NOT</span>: Forbidden
+<span class="flag">7. CONTEXT</span>: Files, patterns</pre>
+                </div>
+                <div>
+                    <h3>Customize Prompts</h3>
+                    <pre><span class="cmd">vim</span> ~/.config/flywheel/prompts/SYSTEM_PROMPT.md
+<span class="cmd">flywheel doctor</span>  <span class="cmt"># Verify loaded</span></pre>
+                </div>
+            </div>
+        </div>
+
+
         <!-- FLYWHEEL COMMANDS -->
         <div class="card cyan">
             <h2><span class="icon">🌀</span> Flywheel Commands</h2>
