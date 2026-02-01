@@ -75,3 +75,23 @@ Run `flywheel doctor` to verify.
 ## License
 
 MIT
+
+## Background Execution
+
+Run plan refinement in the background:
+
+```bash
+# Start refine in background
+flywheel refine --iters 3 --bg
+
+# List running jobs
+flywheel jobs
+
+# View live logs
+flywheel logs refine-myrepo-123456
+
+# Attach to see full output
+flywheel attach refine-myrepo-123456
+```
+
+This lets you run multiple refinements simultaneously across different projects.
