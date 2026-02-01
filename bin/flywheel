@@ -354,6 +354,11 @@ When picking beads, prioritize those that affect multiple files or require coord
 
 START NOW. Run: bv --robot-next")
     ntm send "$session" --no-cass-check --cc= "$cc_prompt" || true
+    # Claude also needs explicit Enter key - panes 2 to cc_n+1
+    for pane in $(seq 2 $((cc_n + 1))); do
+      sleep 0.3
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
   fi
 
   if [[ "$cod_n" -gt 0 ]]; then
