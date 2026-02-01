@@ -118,10 +118,37 @@ refine_plan() {
   if [[ "$run_bg" == true ]]; then
     local job_name="refine-$(basename "$root")-$(date +%H%M%S)"
     local log_file="$root/planning/.refine-${job_name}.log"
+    local wrapper="/tmp/fw-refine-${job_name}.sh"
+    
     note "Starting background job: $job_name"
     note "Log: $log_file"
-    tmux new-session -d -s "$job_name" "cd '$root' && flywheel refine --max $max_iters --plan '$plan_in' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 5"
-    note "Commands: flywheel jobs | flywheel logs $job_name | flywheel attach $job_name"
+    
+    # Wrapper script stays open after completion for review
+    cat > "$wrapper" << 'FWWRAP'
+#!/bin/bash
+cd "$1"
+LOG="$2"
+MAX="$3"
+PLAN="$4"
+echo "=== Flywheel Refine Started: $(date) ===" | tee "$LOG"
+echo "Plan: $PLAN | Max iterations: $MAX" | tee -a "$LOG"
+echo "" | tee -a "$LOG"
+~/.local/bin/flywheel refine --max "$MAX" --plan "$PLAN" 2>&1 | tee -a "$LOG"
+echo "" | tee -a "$LOG"
+echo "=== COMPLETED: $(date) ===" | tee -a "$LOG"
+echo ""
+echo "Session complete. Press Enter to close, or Ctrl+B D to detach..."
+read -r
+FWWRAP
+    chmod +x "$wrapper"
+    
+    tmux new-session -d -s "$job_name" "bash \"$wrapper\" \"$root\" \"$log_file\" \"$max_iters\" \"$plan_in\""
+    
+    note "Background job started!"
+    note "Commands:"
+    note "  flywheel attach $job_name  # View progress"
+    note "  flywheel jobs              # List jobs" 
+    note "  flywheel logs              # Tail log"
     return 0
   fi
 
@@ -144,6 +171,7 @@ refine_plan() {
     if [[ "$until_approved" == true ]]; then
       note "Iteration $i: reviewing $prev"
 
+      # Ask Codex to review and either APPROVE or provide improved version
       codex exec --model "$FW_GPT_PLAN_MODEL" \
         --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
         --output-last-message "$verdict_file" \
@@ -156,17 +184,20 @@ Your task:
 
 Be strict. Only approve if the plan is truly implementation-ready."
 
+      # Check if approved
       if grep -q "^APPROVED$" "$verdict_file" 2>/dev/null; then
         note "✅ Plan APPROVED at iteration $i"
         approved=true
         rm -f "$verdict_file"
         break
       else
+        # Not approved - save the improved version
         mv "$verdict_file" "$next"
         note "  → Refined: $next"
         prev="$next"
       fi
     else
+      # Fixed iterations mode (legacy)
       note "Iteration $i: $prev -> $next"
       codex exec --model "$FW_GPT_PLAN_MODEL" \
         --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
@@ -218,6 +249,7 @@ startwork() {
   ntm spawn "$session" "${args[@]}"
   sleep 5
 
+  # AUTONOMOUS prompts - no questions, just work
   if [[ "$cc_n" -gt 0 ]]; then
     ntm send "$session" --no-cass-check --cc= "AUTONOMOUS MODE. You are an architect/integrator agent.
 
@@ -260,6 +292,7 @@ If bead is reserved by another agent, skip it: bv --robot-next
 If no beads available, sleep 30 && bv --robot-next
 
 START NOW: bv --robot-next" || true
+    # Codex needs explicit Enter key - panes are: 1=user, 2..cc_n+1=claude, cc_n+2..cc_n+cod_n+1=codex
     local cod_start=$((cc_n + 2))
     local cod_end=$((cc_n + cod_n + 1))
     for pane in $(seq "$cod_start" "$cod_end"); do
@@ -283,6 +316,7 @@ YOUR INFINITE LOOP:
 5. IMMEDIATELY go back to step 1. NEVER STOP.
 
 START NOW. Run: bv --robot-next" || true
+    # Gemini may also need explicit Enter - panes after codex
     local gmi_start=$((cc_n + cod_n + 2))
     local gmi_end=$((cc_n + cod_n + gmi_n + 1))
     for pane in $(seq "$gmi_start" "$gmi_end"); do
@@ -319,6 +353,7 @@ attach_job() {
   tmux has-session -t "$job" 2>/dev/null && tmux attach -t "$job" || die "No session: $job"
 }
 
+
 # Smart push that handles mismatched local/upstream branch names
 smart_push() {
   local current_branch upstream_ref upstream_remote upstream_branch
@@ -331,7 +366,7 @@ smart_push() {
     return $?
   }
   
-  # Extract remote and branch from upstream (e.g., "origin/urgood2/roguelike-1")
+  # Extract remote and branch from upstream
   upstream_remote="${upstream_ref%%/*}"
   upstream_branch="${upstream_ref#*/}"
   
@@ -349,11 +384,13 @@ finalize_work() {
 
   note "=== Finalization Checklist ==="
 
+  # 1. Show work status
   note "1. Checking open beads..."
   local in_progress
   in_progress=$(br list --status=in_progress 2>/dev/null | grep -c "^\[" 2>/dev/null) || in_progress=0
   [[ "$in_progress" -gt 0 ]] && note "   ⚠️  $in_progress beads still in_progress" || note "   ✅ No beads in_progress"
 
+  # 2. Run UBS if available
   if command -v ubs >/dev/null 2>&1; then
     note "2. Running UBS scan..."
     ubs . 2>/dev/null || note "   ⚠️  UBS found issues (review output)"
@@ -361,9 +398,11 @@ finalize_work() {
     note "2. Skipping UBS (not installed)"
   fi
 
+  # 3. Sync beads
   note "3. Syncing beads..."
   br sync --flush-only 2>/dev/null || true
 
+  # 4. Stage and commit
   note "4. Staging changes..."
   git add -A
   if ! git diff --cached --quiet; then
@@ -373,6 +412,7 @@ finalize_work() {
     note "   Nothing to commit"
   fi
 
+  # 5. Push if requested
   if [[ "$do_push" == true ]]; then
     note "5. Pushing to remote..."
     git pull --rebase || die "Pull failed - resolve conflicts first"
@@ -382,6 +422,7 @@ finalize_work() {
     note "5. Skipping push (use --push or 'flywheel sync')"
   fi
 
+  # 6. Final status
   note "6. Final status:"
   git status --short
   note "=== Finalization complete ==="
@@ -405,8 +446,10 @@ run_qa() {
 
   note "Spawning QA agent (Opus) in session: $session"
 
+  # Kill existing QA session if exists
   tmux kill-session -t "$session" 2>/dev/null || true
 
+  # Create QA prompt file
   local prompt_file="/tmp/flywheel-qa-prompt-$$.md"
   cat > "$prompt_file" << 'QAPROMPT'
 You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps IN ORDER:
@@ -433,14 +476,17 @@ You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps 
 START NOW - run step 1.
 QAPROMPT
 
+  # Create tmux session and launch claude, then send prompt
   tmux new-session -d -s "$session" -c "$root"
   tmux send-keys -t "$session" "cd '$root' && claude --dangerously-skip-permissions --model opus" Enter
   sleep 5
 
+  # Send the prompt (read from file)
   local prompt
   prompt=$(cat "$prompt_file")
   rm -f "$prompt_file"
 
+  # Use tmux send-keys with the prompt, then Enter separately
   tmux send-keys -t "$session" "$prompt"
   sleep 0.5
   tmux send-keys -t "$session" Enter
@@ -452,26 +498,31 @@ QAPROMPT
 
 is_pane_idle() {
   local session="$1" pane="$2"
+  # Capture last 10 lines of pane output
   local output
   output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -10 2>/dev/null) || return 1
 
+  # Check for idle indicators (agent waiting/stalled)
   if echo "$output" | grep -qiE "(next steps|what.*should|which.*should|shall i|want me to|waiting for|please confirm|let me know|─────$|^\s*$)" 2>/dev/null; then
-    return 0
+    return 0  # Idle - needs nudge
   fi
 
+  # Check if there's active spinner/progress (agent working)
   if echo "$output" | grep -qE "(\.{3}|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Running|Executing|Writing|Reading|Searching)" 2>/dev/null; then
-    return 1
+    return 1  # Working - don't nudge
   fi
 
+  # Check for recent command execution (working)
   if echo "$output" | grep -qE "^\$|^>|^claude>|^codex>" 2>/dev/null; then
+    # At prompt but might be thinking - check if last line is empty/prompt
     local last_line
     last_line=$(echo "$output" | tail -1)
     if [[ -z "$last_line" || "$last_line" =~ ^[[:space:]]*$ ]]; then
-      return 0
+      return 0  # Empty line at end = probably idle
     fi
   fi
 
-  return 1
+  return 1  # Assume working if unsure
 }
 
 nudge_agents() {
@@ -485,8 +536,9 @@ nudge_agents() {
 
   local nudged=0
   local skipped=0
-  set +e
+  set +e  # Don't exit on arithmetic that evaluates to 0
 
+  # Check each agent pane (skip pane 1 which is user)
   for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
     local pane_title
     pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
@@ -494,6 +546,7 @@ nudge_agents() {
     if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
       note "  Nudging pane $pane ($pane_title)"
 
+      # Determine agent type from pane title
       if [[ "$pane_title" == *"_cod_"* ]]; then
         tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
         sleep 0.2
