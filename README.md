@@ -7,6 +7,7 @@ An "oh-my-opencode" style workflow wrapper for the Agent Flywheel / ACFS toolcha
 One command (`flywheel ...`) that:
 - Works in **any repo** (existing or freshly cloned)
 - Supports **any branch** (existing or new)
+- **Automated beads creation** from plans
 - Configurable **interview rounds**, **plan refinement iterations**, and **agent mix**
 - Integrates with NTM, Beads, APR, and Agent Mail
 
@@ -24,7 +25,7 @@ cd /data/projects/your-repo
 flywheel init
 flywheel plan --rounds 2
 flywheel refine --iters 3
-flywheel beads
+flywheel beads --min-beads 50    # Now automated!
 flywheel startwork --cc 3 --cod 2 --gmi 1
 ```
 
@@ -36,9 +37,34 @@ flywheel startwork --cc 3 --cod 2 --gmi 1
 | `flywheel init` | Initialize repo (creates .flywheel/, planning/, AGENTS.md, beads) |
 | `flywheel checkout <branch> [base]` | Create/switch branches |
 | `flywheel plan [--rounds N]` | Start interactive planning interview |
-| `flywheel refine [--iters N]` | Refine plan with Codex |
-| `flywheel beads [--min-beads N]` | Convert plan to Beads tasks |
+| `flywheel refine [--iters N] [--bg]` | Refine plan with Codex |
+| `flywheel beads [--min-beads N] [--bg]` | **Auto-create beads from plan** |
 | `flywheel startwork [--cc N] [--cod N] [--gmi N]` | Spawn agent swarm |
+| `flywheel jobs` | List background jobs |
+| `flywheel logs [job]` | Tail job logs |
+| `flywheel attach <job>` | Attach to background job |
+
+## Full Workflow with APR
+
+```bash
+# 1. Initialize
+cd /data/projects/my-feature
+flywheel init
+cp existing-plan.md planning/PLAN_v0.md
+
+# 2. Refine with APR (optional)
+apr setup
+apr run 1
+apr run 2
+apr show 2 > planning/PLAN.md
+
+# 3. Create beads (automated!)
+flywheel beads --plan planning/PLAN.md --min-beads 50
+
+# 4. Start agents
+flywheel startwork --cc 2
+ntm attach my-feature
+```
 
 ## Configuration
 
@@ -65,33 +91,6 @@ Requires Agent Flywheel / ACFS toolchain:
 
 Run `flywheel doctor` to verify.
 
-## Files
-
-- `bin/flywheel` - Main CLI script
-- `config/config.env` - Default configuration
-- `docs/GUIDE.md` - Full setup guide
-- `docs/CHEATSHEET.html` - Visual command reference
-
 ## License
 
 MIT
-
-## Background Execution
-
-Run plan refinement in the background:
-
-```bash
-# Start refine in background
-flywheel refine --iters 3 --bg
-
-# List running jobs
-flywheel jobs
-
-# View live logs
-flywheel logs refine-myrepo-123456
-
-# Attach to see full output
-flywheel attach refine-myrepo-123456
-```
-
-This lets you run multiple refinements simultaneously across different projects.

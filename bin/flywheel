@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Flywheel-Lite with background execution support
+# Flywheel-Lite with automated beads creation
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
@@ -28,14 +28,14 @@ Usage:
   flywheel init
   flywheel plan [--rounds N]
   flywheel refine [--iters N] [--plan FILE] [--bg]
-  flywheel beads [--plan FILE] [--min-beads N]
+  flywheel beads [--plan FILE] [--min-beads N] [--bg]
   flywheel startwork [--cc N] [--cod N] [--gmi N]
-  flywheel jobs                    # List background refine jobs
+  flywheel jobs                    # List background jobs
   flywheel logs [job-name]         # Tail job log
   flywheel attach <job-name>       # Attach to job tmux session
 
 Options:
-  --bg    Run refine in background tmux session
+  --bg    Run in background tmux session
 USAGE
 }
 
@@ -138,16 +138,71 @@ refine_plan() {
 make_beads() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local plan="planning/PLAN.md" min_beads="100"
+  local plan="planning/PLAN.md" min_beads="50" run_bg=false
   while [[ $# -gt 0 ]]; do
-    case "$1" in --plan) plan="$2"; shift 2;; --min-beads) min_beads="$2"; shift 2;; *) die "Unknown: $1";; esac
+    case "$1" in 
+      --plan) plan="$2"; shift 2;; 
+      --min-beads) min_beads="$2"; shift 2;; 
+      --bg|--background) run_bg=true; shift;;
+      *) die "Unknown: $1";; 
+    esac
   done
   cd "$root"
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
-  note "Run manually:"
-  echo "  cc \"Read ${plan}. Create ${min_beads}+ beads with bd CLI.\""
-  echo "Then: bv --robot-triage"
+
+  local session; session="beads-$(basename "$root")"
+  local prompt="You are a task decomposition expert. Read ${plan} and create Beads tasks.
+
+RULES:
+1. Create an EPIC first for the main feature
+2. Create ${min_beads}+ sub-tasks with clear acceptance criteria
+3. Use priorities: P1 (critical path), P2 (important), P3 (polish)
+4. Set dependencies between tasks using --parent
+
+COMMANDS:
+- br add -t epic -p P1 Epic Title Epic description
+- br add -t task -p P1 Task Title Detailed acceptance criteria
+- br update <id> --parent <epic-id>
+
+After creating all tasks, run: bv --robot-triage
+Then say BEADS_COMPLETE when done."
+
+  if [[ "$run_bg" == true ]]; then
+    local log_file="$root/planning/.beads-${session}.log"
+    note "Starting background beads job: $session"
+    note "Log: $log_file"
+    tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions --print '$prompt' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
+    note "Commands: flywheel jobs | flywheel logs $session | flywheel attach $session"
+    return 0
+  fi
+
+  note "Spawning beads creation session: $session"
+  
+  # Check if session exists
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Session $session already exists. Attaching..."
+    tmux attach -t "$session"
+    return 0
+  fi
+
+  # Create new tmux session with claude
+  tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions"
+  sleep 3
+  
+  # Send the prompt
+  tmux send-keys -t "$session" "$prompt" Enter
+  
+  note "Beads creation started in session: $session"
+  note "Attach with: tmux attach -t $session"
+  note "Or: flywheel attach $session"
+  
+  # Ask if user wants to attach
+  read -p "Attach now? [Y/n] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    tmux attach -t "$session"
+  fi
 }
 
 startwork() {
@@ -171,8 +226,8 @@ startwork() {
 }
 
 list_jobs() {
-  note "Background refine jobs:"
-  tmux list-sessions 2>/dev/null | grep -E "^refine-" || echo "  None"
+  note "Background jobs:"
+  tmux list-sessions 2>/dev/null | grep -E "^(refine-|beads-)" || echo "  None"
   echo ""
   note "All sessions:"
   tmux list-sessions 2>/dev/null || echo "  None"
@@ -182,7 +237,7 @@ view_logs() {
   local job="${1:-}"
   local root; root="$(git_root 2>/dev/null || echo .)"
   if [[ -z "$job" ]]; then
-    local f; f=$(find "$root" -name ".refine-*.log" 2>/dev/null | head -1)
+    local f; f=$(find "$root" -name ".refine-*.log" -o -name ".beads-*.log" 2>/dev/null | head -1)
     [[ -n "$f" ]] && { note "Tailing: $f"; tail -f "$f"; } || die "No logs found"
   else
     local f; f=$(find "$root" -name "*${job}*.log" 2>/dev/null | head -1)
