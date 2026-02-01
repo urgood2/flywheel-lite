@@ -1,27 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Flywheel-Lite with background execution + autonomous agent prompts
-# Enhanced with Oh-My-OpenCode prompt patterns
+# Flywheel-Lite with resumable refinement
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
-
-# Load prompt from external file with variable substitution
-load_prompt() {
-  local name="$1"
-  local prompt_file="$HOME/.config/flywheel/prompts/${name}.md"
-  if [[ -f "$prompt_file" ]]; then
-    cat "$prompt_file"
-  else
-    echo ""
-  fi
-}
-
-# Get system prompt (base rules that apply to all agents)
-get_system_prompt() {
-  load_prompt "SYSTEM_PROMPT"
-}
 
 load_config() {
   local repo_root="${1:-}"
@@ -44,29 +27,17 @@ Usage:
   flywheel checkout <branch> [base]
   flywheel init
   flywheel plan [--rounds N]
-  flywheel refine [--max N] [--plan FILE] [--bg]  # Iterate until approved
-  flywheel beads [--plan FILE] [--min-beads N]
+  flywheel refine [--iters N] [--plan FILE] [--bg] [--resume]
+  flywheel beads [--plan FILE] [--min-beads N] [--bg]
   flywheel startwork [--cc N] [--cod N] [--gmi N]
-  flywheel jobs                    # List background refine jobs
+  flywheel status                  # Show refine/beads progress
+  flywheel jobs                    # List background jobs
   flywheel logs [job-name]         # Tail job log
-  flywheel attach <job-name>       # Attach to job tmux session
-  flywheel finalize [--push]       # Commit beads, optionally push
-  flywheel sync                    # Full finalize + push
-  flywheel qa                      # Spawn Opus agent to run QA workflow
-  flywheel watchdog [interval]     # Auto-nudge idle agents (default 60s)
-  flywheel nudge                   # One-time nudge to all agents
+  flywheel attach <job-name>       # Attach to background job
 
 Options:
-  --bg    Run refine in background tmux session
-
-Prompts:
-  External prompts loaded from ~/.config/flywheel/prompts/
-  - SYSTEM_PROMPT.md   Base rules for all agents
-  - INTERVIEW.md       Planning interview prompt
-  - AGENT_WORKER.md    Implementation agent prompt
-  - QA_AGENT.md        QA verification prompt
-  - DELEGATION_RULES.md Task delegation structure
-  - LIBRARIAN.md       External research pattern
+  --bg      Run in background tmux session
+  --resume  Resume interrupted refine from last checkpoint
 USAGE
 }
 
@@ -75,18 +46,6 @@ doctor() {
   for cmd in git tmux ntm bd bv apr ubs claude codex gemini; do require_cmd "$cmd"; done
   note "Running: ntm deps -v"
   ntm deps -v
-  note "Checking prompts..."
-  local prompts_dir="$HOME/.config/flywheel/prompts"
-  if [[ -d "$prompts_dir" ]]; then
-    local count
-    count=$(find "$prompts_dir" -name "*.md" 2>/dev/null | wc -l)
-    note "  Found $count prompt files in $prompts_dir"
-    for f in "$prompts_dir"/*.md; do
-      [[ -f "$f" ]] && note "    ✓ $(basename "$f")"
-    done
-  else
-    note "  ⚠️  No prompts dir: $prompts_dir"
-  fi
   note "OK: toolchain present."
 }
 
@@ -132,202 +91,220 @@ plan_session() {
   note "Spawning planning session: $session"
   ntm spawn "$session" --cc=1
   sleep 3
-
-  # Load interview prompt from external file, with fallback
-  local interview_prompt
-  interview_prompt=$(load_prompt "INTERVIEW")
-  if [[ -z "$interview_prompt" ]]; then
-    interview_prompt="You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md."
-  else
-    # Substitute {rounds} placeholder
-    interview_prompt="${interview_prompt//\{rounds\}/$rounds}"
-  fi
-
-  # Prepend system prompt if available
-  local system_prompt
-  system_prompt=$(get_system_prompt)
-  if [[ -n "$system_prompt" ]]; then
-    interview_prompt="$system_prompt
-
----
-
-$interview_prompt"
-  fi
-
-  ntm send "$session" --no-cass-check --all "$interview_prompt" || true
-  # Send Enter to submit the prompt (pane 2 is the agent)
-  sleep 0.3
-  tmux send-keys -t "${session}:1.2" Enter 2>/dev/null || true
+  ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
   note "Attaching..."
   ntm attach "$session"
+}
+
+# Save refine state for resume
+save_refine_state() {
+  local root="$1" current_iter="$2" total_iters="$3" plan_in="$4"
+  mkdir -p "$root/.flywheel"
+  cat > "$root/.flywheel/refine-state.json" <<EOF
+{
+  "current_iter": $current_iter,
+  "total_iters": $total_iters,
+  "plan_in": "$plan_in",
+  "timestamp": "$(date -Iseconds)",
+  "status": "in_progress"
+}
+EOF
+}
+
+# Load refine state
+load_refine_state() {
+  local root="$1"
+  local state_file="$root/.flywheel/refine-state.json"
+  if [[ -f "$state_file" ]]; then
+    cat "$state_file"
+  else
+    echo "{}"
+  fi
+}
+
+# Mark refine complete
+complete_refine_state() {
+  local root="$1"
+  local state_file="$root/.flywheel/refine-state.json"
+  if [[ -f "$state_file" ]]; then
+    local tmp=$(mktemp)
+    sed 's/"status": "in_progress"/"status": "complete"/' "$state_file" > "$tmp"
+    mv "$tmp" "$state_file"
+  fi
+}
+
+# Find latest iteration file
+find_latest_iter() {
+  local root="$1"
+  local latest=$(ls -t "$root/planning/PLAN_codex_iter"*.md 2>/dev/null | head -1)
+  if [[ -n "$latest" ]]; then
+    # Extract iteration number
+    echo "$latest" | grep -oE 'iter[0-9]+' | grep -oE '[0-9]+'
+  else
+    echo "0"
+  fi
 }
 
 refine_plan() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local max_iters="${FW_PLAN_ITERS:-10}" plan_in="planning/PLAN_v0.md" run_bg=false until_approved=true
+  local iters="$FW_PLAN_ITERS" plan_in="planning/PLAN_v0.md" run_bg=false do_resume=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --iters) max_iters="$2"; until_approved=false; shift 2;;
-      --max) max_iters="$2"; shift 2;;
+      --iters) iters="$2"; shift 2;;
       --plan) plan_in="$2"; shift 2;;
       --bg|--background) run_bg=true; shift;;
+      --resume) do_resume=true; shift;;
       *) die "Unknown: $1";;
     esac
   done
   cd "$root"
+
+  # Handle resume
+  local start_iter=1
+  if [[ "$do_resume" == true ]]; then
+    local state=$(load_refine_state "$root")
+    local saved_status=$(echo "$state" | grep -oP '(?<="status": ")[^"]*' 2>/dev/null || echo "")
+    
+    if [[ "$saved_status" == "in_progress" ]]; then
+      local saved_iter=$(echo "$state" | grep -oP '(?<="current_iter": )[0-9]+' 2>/dev/null || echo "0")
+      local saved_total=$(echo "$state" | grep -oP '(?<="total_iters": )[0-9]+' 2>/dev/null || echo "$iters")
+      local saved_plan=$(echo "$state" | grep -oP '(?<="plan_in": ")[^"]*' 2>/dev/null || echo "")
+      
+      note "Found interrupted refine at iteration $saved_iter/$saved_total"
+      start_iter=$((saved_iter))
+      iters=$saved_total
+      
+      # Find the latest completed iteration file
+      local latest_iter=$(find_latest_iter "$root")
+      if [[ "$latest_iter" -gt 0 ]]; then
+        plan_in="planning/PLAN_codex_iter${latest_iter}.md"
+        start_iter=$((latest_iter + 1))
+        note "Resuming from iteration $start_iter (found iter${latest_iter})"
+      fi
+    else
+      note "No interrupted refine found. Starting fresh."
+    fi
+  else
+    # Check if there is an incomplete refine
+    local state=$(load_refine_state "$root")
+    local saved_status=$(echo "$state" | grep -oP '(?<="status": ")[^"]*' 2>/dev/null || echo "")
+    if [[ "$saved_status" == "in_progress" ]]; then
+      local latest_iter=$(find_latest_iter "$root")
+      note "WARNING: Found interrupted refine at iter${latest_iter}"
+      note "Use --resume to continue, or proceed to start fresh"
+      read -p "Start fresh? [y/N] " -n 1 -r
+      echo
+      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        note "Aborting. Use: flywheel refine --resume"
+        return 1
+      fi
+    fi
+  fi
+
   [[ -f "$plan_in" ]] || die "Missing: $plan_in"
 
   if [[ "$run_bg" == true ]]; then
     local job_name="refine-$(basename "$root")-$(date +%H%M%S)"
     local log_file="$root/planning/.refine-${job_name}.log"
-    local wrapper="/tmp/fw-refine-${job_name}.sh"
-
     note "Starting background job: $job_name"
     note "Log: $log_file"
-
-    # Wrapper script stays open after completion for review
-    cat > "$wrapper" << 'FWWRAP'
-#!/bin/bash
-cd "$1"
-LOG="$2"
-MAX="$3"
-PLAN="$4"
-echo "=== Flywheel Refine Started: $(date) ===" | tee "$LOG"
-echo "Plan: $PLAN | Max iterations: $MAX" | tee -a "$LOG"
-echo "" | tee -a "$LOG"
-~/.local/bin/flywheel refine --max "$MAX" --plan "$PLAN" 2>&1 | tee -a "$LOG"
-echo "" | tee -a "$LOG"
-echo "=== COMPLETED: $(date) ===" | tee -a "$LOG"
-echo ""
-echo "Session complete. Press Enter to close, or Ctrl+B D to detach..."
-read -r
-FWWRAP
-    chmod +x "$wrapper"
-
-    tmux new-session -d -s "$job_name" "bash \"$wrapper\" \"$root\" \"$log_file\" \"$max_iters\" \"$plan_in\""
-
-    note "Background job started!"
-    note "Commands:"
-    note "  flywheel attach $job_name  # View progress"
-    note "  flywheel jobs              # List jobs"
-    note "  flywheel logs              # Tail log"
+    local resume_flag=""
+    [[ "$do_resume" == true ]] && resume_flag="--resume"
+    tmux new-session -d -s "$job_name" "cd '$root' && flywheel refine --iters $iters --plan '$plan_in' $resume_flag 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
+    note "Commands: flywheel jobs | flywheel logs $job_name | flywheel attach $job_name"
     return 0
   fi
 
   mkdir -p planning
+  note "Codex refinement: model=$FW_GPT_PLAN_MODEL iters=$iters (starting at $start_iter)"
+  
   local prev="$plan_in"
-  local i=0
-  local approved=false
-
-  if [[ "$until_approved" == true ]]; then
-    note "Codex refinement: model=$FW_GPT_PLAN_MODEL (until approved, max=$max_iters)"
-  else
-    note "Codex refinement: model=$FW_GPT_PLAN_MODEL iters=$max_iters"
-  fi
-
-  while [[ $i -lt $max_iters ]]; do
-    i=$((i + 1))
+  for i in $(seq "$start_iter" "$iters"); do
     local next="planning/PLAN_codex_iter${i}.md"
-    local verdict_file="/tmp/codex-verdict-$$.txt"
-
-    if [[ "$until_approved" == true ]]; then
-      note "Iteration $i: reviewing $prev"
-
-      # Ask Codex to review and either APPROVE or provide improved version
-      codex exec --model "$FW_GPT_PLAN_MODEL" \
-        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
-        --output-last-message "$verdict_file" \
-        "Review this engineering plan file: ${prev}
-
-Your task:
-1. Check for: specificity, testability, parallelizability, completeness, clarity
-2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
-3. If the plan needs improvement, output an IMPROVED version of the entire plan (markdown only, no commentary)
-
-Be strict. Only approve if the plan is truly implementation-ready."
-
-      # Check if approved
-      if grep -q "^APPROVED$" "$verdict_file" 2>/dev/null; then
-        note "✅ Plan APPROVED at iteration $i"
-        approved=true
-        rm -f "$verdict_file"
-        break
-      else
-        # Not approved - save the improved version
-        mv "$verdict_file" "$next"
-        note "  → Refined: $next"
-        prev="$next"
-      fi
-    else
-      # Fixed iterations mode (legacy)
-      note "Iteration $i: $prev -> $next"
-      codex exec --model "$FW_GPT_PLAN_MODEL" \
-        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
-        --output-last-message "$next" \
-        "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."
-      prev="$next"
+    
+    # Save state before each iteration
+    save_refine_state "$root" "$i" "$iters" "$prev"
+    
+    note "Iteration $i/$iters: $prev -> $next"
+    
+    if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
+      --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
+      --output-last-message "$next" \
+      "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."; then
+      note "ERROR: Iteration $i failed. State saved. Resume with: flywheel refine --resume"
+      return 1
     fi
+    
+    prev="$next"
+    note "Checkpoint saved: $next"
   done
-
+  
   cp "$prev" planning/PLAN.md
-
-  if [[ "$until_approved" == true && "$approved" == false ]]; then
-    note "⚠️  Max iterations ($max_iters) reached without approval"
-    note "  Review planning/PLAN.md manually or run again with --max N"
-  fi
-
-  note "Done: planning/PLAN.md"
+  complete_refine_state "$root"
+  note "Done: planning/PLAN.md (from $iters iterations)"
 }
 
 make_beads() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local plan="planning/PLAN.md" min_beads="100"
+  local plan="planning/PLAN.md" min_beads="50" run_bg=false
   while [[ $# -gt 0 ]]; do
-    case "$1" in --plan) plan="$2"; shift 2;; --min-beads) min_beads="$2"; shift 2;; *) die "Unknown: $1";; esac
+    case "$1" in 
+      --plan) plan="$2"; shift 2;; 
+      --min-beads) min_beads="$2"; shift 2;; 
+      --bg|--background) run_bg=true; shift;;
+      *) die "Unknown: $1";; 
+    esac
   done
   cd "$root"
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
-  note "Run manually:"
-  echo "  cc \"Read ${plan}. Create ${min_beads}+ beads with bd CLI.\""
-  echo "Then: bv --robot-triage"
-}
 
-# Build agent prompt with system rules prepended
-build_agent_prompt() {
-  local agent_type="$1"
-  local base_prompt="$2"
+  local session; session="beads-$(basename "$root")"
+  local prompt="You are a task decomposition expert. Read ${plan} and create Beads tasks.
 
-  local system_prompt
-  system_prompt=$(get_system_prompt)
+RULES:
+1. Create an EPIC first for the main feature
+2. Create ${min_beads}+ sub-tasks with clear acceptance criteria
+3. Use priorities: P1 (critical path), P2 (important), P3 (polish)
+4. Set dependencies between tasks using --parent
 
-  local worker_prompt
-  worker_prompt=$(load_prompt "AGENT_WORKER")
+COMMANDS:
+- br add -t epic -p P1 'Epic Title' 'Epic description'
+- br add -t task -p P1 'Task Title' 'Detailed acceptance criteria'
+- br update <id> --parent <epic-id>
 
-  # Combine: system rules + worker template + agent-specific additions
-  local full_prompt=""
+After creating all tasks, run: bv --robot-triage
+Then say BEADS_COMPLETE when done."
 
-  if [[ -n "$system_prompt" ]]; then
-    full_prompt="$system_prompt
-
----
-
-"
+  if [[ "$run_bg" == true ]]; then
+    local log_file="$root/planning/.beads-${session}.log"
+    note "Starting background beads job: $session"
+    note "Log: $log_file"
+    tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions --print '$prompt' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
+    note "Commands: flywheel jobs | flywheel logs $session | flywheel attach $session"
+    return 0
   fi
 
-  if [[ -n "$worker_prompt" ]]; then
-    full_prompt="${full_prompt}${worker_prompt}
-
----
-
-"
+  note "Spawning beads creation session: $session"
+  
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Session $session already exists. Attaching..."
+    tmux attach -t "$session"
+    return 0
   fi
 
-  full_prompt="${full_prompt}${base_prompt}"
-
-  echo "$full_prompt"
+  tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions"
+  sleep 3
+  tmux send-keys -t "$session" "$prompt" Enter
+  
+  note "Beads creation started in session: $session"
+  read -p "Attach now? [Y/n] " -n 1 -r
+  echo
+  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    tmux attach -t "$session"
+  fi
 }
 
 startwork() {
@@ -340,75 +317,74 @@ startwork() {
   done
   cd "$root"
   local args=()
-  [[ "$cc_n" -gt 0 ]] && args+=(--cc="${cc_n}:${FW_CLAUDE_MODEL}")
+  [[ "$cc_n" -gt 0 ]] && args+=(--cc="$cc_n")
   [[ "$cod_n" -gt 0 ]] && args+=(--cod="$cod_n")
   [[ "$gmi_n" -gt 0 ]] && args+=(--gmi="$gmi_n")
-  note "Spawning: $session cc=$cc_n ($FW_CLAUDE_MODEL) cod=$cod_n gmi=$gmi_n"
+  note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n"
   ntm spawn "$session" "${args[@]}"
-  sleep 5
-
-  # AUTONOMOUS prompts - enhanced with external system prompt
-  if [[ "$cc_n" -gt 0 ]]; then
-    local cc_prompt
-    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Integrator
-
-You prefer cross-cutting work, refactors, and integration tasks.
-When picking beads, prioritize those that affect multiple files or require coordination.
-
-START NOW. Run: bv --robot-next")
-    ntm send "$session" --no-cass-check --cc= "$cc_prompt" || true
-    # Claude also needs explicit Enter key - panes 2 to cc_n+1
-    for pane in $(seq 2 $((cc_n + 1))); do
-      sleep 0.3
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-    done
-  fi
-
-  if [[ "$cod_n" -gt 0 ]]; then
-    local cod_prompt
-    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementation Specialist
-
-You focus on implementation tasks with tests.
-When picking beads, prioritize feature implementation and bug fixes.
-
-CODEX-SPECIFIC RULES:
-- NEVER output 'Next steps' - just DO the next step
-- After closing a bead, echo 'CONTINUING...' && bv --robot-next
-
-START NOW: bv --robot-next")
-    ntm send "$session" --no-cass-check --cod= "$cod_prompt" || true
-    # Codex needs explicit Enter key
-    local cod_start=$((cc_n + 2))
-    local cod_end=$((cc_n + cod_n + 1))
-    for pane in $(seq "$cod_start" "$cod_end"); do
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-    done
-  fi
-
-  if [[ "$gmi_n" -gt 0 ]]; then
-    local gmi_prompt
-    gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer
-
-You focus on reviewing completed work for quality.
-When picking beads, prioritize review tasks.
-If you find issues, create new beads. If clean, add approval comment.
-
-START NOW. Run: bv --robot-next")
-    ntm send "$session" --no-cass-check --gmi= "$gmi_prompt" || true
-    # Gemini may also need explicit Enter
-    local gmi_start=$((cc_n + cod_n + 2))
-    local gmi_end=$((cc_n + cod_n + gmi_n + 1))
-    for pane in $(seq "$gmi_start" "$gmi_end"); do
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-    done
-  fi
-
+  sleep 3
+  ntm send "$session" --no-cass-check --all "Swarm SOP: bv --robot-triage, claim bead, reserve files, implement, close bead, notify." || true
   note "Attach: ntm attach $session"
 }
 
+show_status() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  cd "$root"
+  
+  echo "╔════════════════════════════════════════════════════════════════╗"
+  echo "║              FLYWHEEL STATUS: $(basename "$root")"
+  echo "╚════════════════════════════════════════════════════════════════╝"
+  echo ""
+  
+  # Refine status
+  echo "=== REFINE STATUS ==="
+  local state_file="$root/.flywheel/refine-state.json"
+  if [[ -f "$state_file" ]]; then
+    local status=$(grep -oP '(?<="status": ")[^"]*' "$state_file" 2>/dev/null || echo "unknown")
+    local current=$(grep -oP '(?<="current_iter": )[0-9]+' "$state_file" 2>/dev/null || echo "?")
+    local total=$(grep -oP '(?<="total_iters": )[0-9]+' "$state_file" 2>/dev/null || echo "?")
+    local ts=$(grep -oP '(?<="timestamp": ")[^"]*' "$state_file" 2>/dev/null || echo "?")
+    echo "  Status: $status"
+    echo "  Progress: iteration $current / $total"
+    echo "  Last update: $ts"
+  else
+    echo "  No refine state found"
+  fi
+  
+  # List iterations
+  echo ""
+  echo "=== PLAN ITERATIONS ==="
+  ls -la planning/PLAN*.md 2>/dev/null | awk '{print "  " $NF " (" $5 " bytes, " $6 " " $7 " " $8 ")"}' || echo "  None"
+  
+  # Latest iteration
+  local latest=$(find_latest_iter "$root")
+  if [[ "$latest" -gt 0 ]]; then
+    echo ""
+    echo "  Latest: iter$latest"
+    echo "  Resume: flywheel refine --resume"
+  fi
+  
+  # Beads status
+  echo ""
+  echo "=== BEADS STATUS ==="
+  if [[ -d .beads ]]; then
+    local total=$(bv 2>/dev/null | grep -c "^" || echo "0")
+    local open=$(br list --status=open 2>/dev/null | grep -c "^" || echo "0")
+    echo "  Total tasks: $total"
+    echo "  Open tasks: $open"
+  else
+    echo "  Beads not initialized"
+  fi
+  
+  # Active sessions
+  echo ""
+  echo "=== ACTIVE SESSIONS ==="
+  tmux ls 2>/dev/null | grep -E "$(basename "$root")" || echo "  None"
+}
+
 list_jobs() {
-  note "Background refine jobs:"
-  tmux list-sessions 2>/dev/null | grep -E "^refine-" || echo "  None"
+  note "Background jobs:"
+  tmux list-sessions 2>/dev/null | grep -E "^(refine-|beads-)" || echo "  None"
   echo ""
   note "All sessions:"
   tmux list-sessions 2>/dev/null || echo "  None"
@@ -418,7 +394,7 @@ view_logs() {
   local job="${1:-}"
   local root; root="$(git_root 2>/dev/null || echo .)"
   if [[ -z "$job" ]]; then
-    local f; f=$(find "$root" -name ".refine-*.log" 2>/dev/null | head -1)
+    local f; f=$(find "$root" -name ".refine-*.log" -o -name ".beads-*.log" 2>/dev/null | sort -t- -k3 -r | head -1)
     [[ -n "$f" ]] && { note "Tailing: $f"; tail -f "$f"; } || die "No logs found"
   else
     local f; f=$(find "$root" -name "*${job}*.log" 2>/dev/null | head -1)
@@ -432,243 +408,6 @@ attach_job() {
   tmux has-session -t "$job" 2>/dev/null && tmux attach -t "$job" || die "No session: $job"
 }
 
-
-# Smart push that handles mismatched local/upstream branch names
-smart_push() {
-  local current_branch upstream_ref upstream_remote upstream_branch
-
-  current_branch=$(git rev-parse --abbrev-ref HEAD)
-  upstream_ref=$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null) || {
-    # No upstream configured - push to same-named branch
-    note "   No upstream configured, pushing to origin/$current_branch"
-    git push -u origin "$current_branch"
-    return $?
-  }
-
-  # Extract remote and branch from upstream
-  upstream_remote="${upstream_ref%%/*}"
-  upstream_branch="${upstream_ref#*/}"
-
-  note "   Pushing $current_branch -> $upstream_remote/$upstream_branch"
-  git push "$upstream_remote" "HEAD:$upstream_branch"
-}
-
-finalize_work() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  local do_push=false
-  while [[ $# -gt 0 ]]; do
-    case "$1" in --push) do_push=true; shift;; *) die "Unknown: $1";; esac
-  done
-  cd "$root"
-
-  note "=== Finalization Checklist ==="
-
-  # 1. Show work status
-  note "1. Checking open beads..."
-  local in_progress
-  in_progress=$(br list --status=in_progress 2>/dev/null | grep -c "^\[" 2>/dev/null) || in_progress=0
-  [[ "$in_progress" -gt 0 ]] && note "   ⚠️  $in_progress beads still in_progress" || note "   ✅ No beads in_progress"
-
-  # 2. Run UBS if available
-  if command -v ubs >/dev/null 2>&1; then
-    note "2. Running UBS scan..."
-    ubs . 2>/dev/null || note "   ⚠️  UBS found issues (review output)"
-  else
-    note "2. Skipping UBS (not installed)"
-  fi
-
-  # 3. Sync beads
-  note "3. Syncing beads..."
-  br sync --flush-only 2>/dev/null || true
-
-  # 4. Stage and commit
-  note "4. Staging changes..."
-  git add -A
-  if ! git diff --cached --quiet; then
-    note "   Committing..."
-    git commit -m "Flywheel checkpoint: $(date +%Y-%m-%d\ %H:%M)" || true
-  else
-    note "   Nothing to commit"
-  fi
-
-  # 5. Push if requested
-  if [[ "$do_push" == true ]]; then
-    note "5. Pushing to remote..."
-    git pull --rebase || die "Pull failed - resolve conflicts first"
-    smart_push || die "Push failed"
-    note "   ✅ Pushed successfully"
-  else
-    note "5. Skipping push (use --push or 'flywheel sync')"
-  fi
-
-  # 6. Final status
-  note "6. Final status:"
-  git status --short
-  note "=== Finalization complete ==="
-}
-
-sync_to_remote() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  cd "$root"
-
-  note "=== Full Sync ==="
-  finalize_work --push
-  note "=== Sync complete - ready for local pull ==="
-  note "On local machine run: git pull"
-}
-
-run_qa() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  local project; project="$(basename "$root")"
-  local session="${project}-qa"
-  cd "$root"
-
-  note "Spawning QA agent (Opus) in session: $session"
-
-  # Kill existing QA session if exists
-  tmux kill-session -t "$session" 2>/dev/null || true
-
-  # Load QA prompt from external file with fallback
-  local qa_prompt
-  qa_prompt=$(load_prompt "QA_AGENT")
-
-  # Prepend system prompt
-  local system_prompt
-  system_prompt=$(get_system_prompt)
-  if [[ -n "$system_prompt" ]]; then
-    qa_prompt="$system_prompt
-
----
-
-$qa_prompt"
-  fi
-
-  # Fallback if no external prompt
-  if [[ -z "$qa_prompt" ]] || [[ "$qa_prompt" == *"---"*"---"* && ${#qa_prompt} -lt 100 ]]; then
-    qa_prompt='You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps IN ORDER:
-
-1. Check project structure: ls -la && cat Justfile 2>/dev/null | head -30
-
-2. Build: just build-release || cmake --build build --config Release || echo "No build system"
-
-3. Run tests:
-   - just test || echo "No unit tests"
-   - just test-descent || echo "No descent tests"
-
-4. Bug scan: ubs . 2>&1 | tail -30
-
-5. Bead status: br list --status=open | head -15
-
-6. For ANY test failures or critical UBS issues, create beads:
-   br create "Fix: <description>" -t bug -p 1
-
-7. Write planning/QA_REPORT.md with: build status, test summary, UBS summary, open bead count, and verdict (READY TO SYNC or NEEDS FIXES)
-
-8. Output: QA COMPLETE
-
-START NOW - run step 1.'
-  fi
-
-  # Create tmux session and launch claude, then send prompt
-  tmux new-session -d -s "$session" -c "$root"
-  tmux send-keys -t "$session" "cd '$root' && claude --dangerously-skip-permissions --model opus" Enter
-  sleep 5
-
-  # Use tmux send-keys with the prompt, then Enter separately
-  tmux send-keys -t "$session" "$qa_prompt"
-  sleep 0.5
-  tmux send-keys -t "$session" Enter
-
-  note "QA agent started in session: $session"
-  note "  Attach: tmux attach -t $session"
-  note "  Check:  cat planning/QA_REPORT.md"
-}
-
-is_pane_idle() {
-  local session="$1" pane="$2"
-  # Capture last 10 lines of pane output
-  local output
-  output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -10 2>/dev/null) || return 1
-
-  # Check for idle indicators (agent waiting/stalled)
-  if echo "$output" | grep -qiE "(next steps|what.*should|which.*should|shall i|want me to|waiting for|please confirm|let me know|─────$|^\s*$)" 2>/dev/null; then
-    return 0  # Idle - needs nudge
-  fi
-
-  # Check if there's active spinner/progress (agent working)
-  if echo "$output" | grep -qE "(\.{3}|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Running|Executing|Writing|Reading|Searching)" 2>/dev/null; then
-    return 1  # Working - don't nudge
-  fi
-
-  # Check for recent command execution (working)
-  if echo "$output" | grep -qE "^\$|^>|^claude>|^codex>" 2>/dev/null; then
-    # At prompt but might be thinking - check if last line is empty/prompt
-    local last_line
-    last_line=$(echo "$output" | tail -1)
-    if [[ -z "$last_line" || "$last_line" =~ ^[[:space:]]*$ ]]; then
-      return 0  # Empty line at end = probably idle
-    fi
-  fi
-
-  return 1  # Assume working if unsure
-}
-
-nudge_agents() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  load_config "$root"
-  local session; session="$(basename "$root")"
-  local force=false
-  [[ "${1:-}" == "--force" ]] && force=true
-
-  note "Checking agents in session: $session"
-
-  local nudged=0
-  local skipped=0
-  set +e  # Don't exit on arithmetic that evaluates to 0
-
-  # Check each agent pane (skip pane 1 which is user)
-  for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
-    local pane_title
-    pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
-
-    if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
-      note "  Nudging pane $pane ($pane_title)"
-
-      # Determine agent type from pane title
-      if [[ "$pane_title" == *"_cod_"* ]]; then
-        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
-        sleep 0.2
-        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-      elif [[ "$pane_title" == *"_gmi_"* ]]; then
-        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
-        sleep 0.2
-        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-      elif [[ "$pane_title" == *"_cc_"* ]]; then
-        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
-        sleep 0.2
-        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
-      fi
-      nudged=$((nudged + 1))
-    else
-      note "  Skipping pane $pane ($pane_title) - working"
-      skipped=$((skipped + 1))
-    fi
-  done
-
-  set -e
-  note "Nudged: $nudged | Skipped (working): $skipped"
-}
-
-start_watchdog() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  local session; session="$(basename "$root")"
-  local interval="${1:-60}"
-
-  note "Starting watchdog: session=$session interval=${interval}s"
-  note "Run in background with: flywheel watchdog $interval &"
-  exec flywheel-watchdog "$session" "$interval"
-}
-
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -679,14 +418,10 @@ main() {
     refine) refine_plan "$@";;
     beads) make_beads "$@";;
     startwork) startwork "$@";;
+    status) show_status;;
     jobs) list_jobs;;
     logs) view_logs "${1:-}";;
     attach) attach_job "${1:-}";;
-    finalize) finalize_work "$@";;
-    sync) sync_to_remote;;
-    qa) run_qa;;
-    nudge) nudge_agents;;
-    watchdog) start_watchdog "${1:-60}";;
     ""|-h|--help|help) usage;;
     *) usage; die "Unknown: $cmd";;
   esac
