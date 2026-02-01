@@ -95,7 +95,7 @@
                 <div class="step"><span class="step-num cyan">2</span><div><code>cd /data/projects/myrepo</code></div></div>
                 <div class="step"><span class="step-num cyan">3</span><div><code>flywheel init</code><br><span class="cmt">Bootstrap</span></div></div>
                 <div class="step"><span class="step-num cyan">4</span><div><code>flywheel plan --rounds 2</code><br><span class="cmt">Interview</span></div></div>
-                <div class="step"><span class="step-num cyan">5</span><div><code>flywheel refine --iters 3 --bg</code><br><span class="cmt">Background refine</span></div></div>
+                <div class="step"><span class="step-num cyan">5</span><div><code>flywheel refine --max 5 --bg</code><br><span class="cmt">Background refine</span></div></div>
                 <div class="step"><span class="step-num cyan">6</span><div><code>flywheel beads</code><br><span class="cmt">Plan → Tasks</span></div></div>
                 <div class="step"><span class="step-num cyan">7</span><div><code>flywheel startwork --cc 3</code><br><span class="cmt">Spawn swarm</span></div></div>
                 <div class="step"><span class="step-num cyan">8</span><div><code>ntm attach myrepo</code><br><span class="cmt">Work</span></div></div>
@@ -112,7 +112,7 @@
             
             <h3>Planning</h3>
             <pre><span class="cmd">flywheel plan</span> <span class="flag">--rounds 2</span>
-<span class="cmd">flywheel refine</span> <span class="flag">--iters 3</span>      <span class="cmt"># Foreground</span>
+<span class="cmd">flywheel refine</span> <span class="flag">--iters 3</span>      <span class="cmt"># Until approved</span>
 <span class="cmd">flywheel refine</span> <span class="flag">--iters 3 --bg</span> <span class="cmt"># Background</span>
 <span class="cmd">flywheel beads</span> <span class="flag">--min-beads 50</span></pre>
             
@@ -121,6 +121,23 @@
         </div>
 
         <!-- BACKGROUND JOBS -->
+        <!-- SHELL ALIASES -->
+        <div class="card green">
+            <h2><span class="icon">⚡</span> Shell Aliases</h2>
+            <h3>Quick Commands</h3>
+            <table>
+                <tr><td><code>fw</code></td><td>flywheel</td></tr>
+                <tr><td><code>fws</code></td><td>flywheel sync</td></tr>
+                <tr><td><code>fwf</code></td><td>flywheel finalize</td></tr>
+                <tr><td><code>fwsw</code></td><td>flywheel startwork</td></tr>
+                <tr><td><code>fwq</code></td><td>flywheel qa</td></tr>
+                <tr><td><code>fwn</code></td><td>flywheel nudge</td></tr>
+                <tr><td><code>fwj</code></td><td>flywheel jobs</td></tr>
+            </table>
+            <h3>Sync & Finalize</h3>
+            <pre><span class="cmd">fws</span>                           <span class="cmt"># Sync to remote</span>
+<span class="cmd">fwf</span>                           <span class="cmt"># Commit checkpoint only</span></pre>
+        </div>
         <div class="card cyan">
             <h2><span class="icon">⏳</span> Background Jobs (NEW)</h2>
             <h3>Run Refine in Background</h3>

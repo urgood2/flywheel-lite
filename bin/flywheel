@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Flywheel-Lite with automated beads creation
+# Flywheel-Lite with background execution + autonomous agent prompts
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
@@ -27,15 +27,20 @@ Usage:
   flywheel checkout <branch> [base]
   flywheel init
   flywheel plan [--rounds N]
-  flywheel refine [--iters N] [--plan FILE] [--bg]
-  flywheel beads [--plan FILE] [--min-beads N] [--bg]
+  flywheel refine [--max N] [--plan FILE] [--bg]  # Iterate until approved
+  flywheel beads [--plan FILE] [--min-beads N]
   flywheel startwork [--cc N] [--cod N] [--gmi N]
-  flywheel jobs                    # List background jobs
+  flywheel jobs                    # List background refine jobs
   flywheel logs [job-name]         # Tail job log
   flywheel attach <job-name>       # Attach to job tmux session
+  flywheel finalize [--push]       # Commit beads, optionally push
+  flywheel sync                    # Full finalize + push
+  flywheel qa                      # Spawn Opus agent to run QA workflow
+  flywheel watchdog [interval]     # Auto-nudge idle agents (default 60s)
+  flywheel nudge                   # One-time nudge to all agents
 
 Options:
-  --bg    Run in background tmux session
+  --bg    Run refine in background tmux session
 USAGE
 }
 
@@ -97,10 +102,11 @@ plan_session() {
 refine_plan() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local iters="$FW_PLAN_ITERS" plan_in="planning/PLAN_v0.md" run_bg=false
+  local max_iters="${FW_PLAN_ITERS:-10}" plan_in="planning/PLAN_v0.md" run_bg=false until_approved=true
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --iters) iters="$2"; shift 2;;
+      --iters) max_iters="$2"; until_approved=false; shift 2;;
+      --max) max_iters="$2"; shift 2;;
       --plan) plan_in="$2"; shift 2;;
       --bg|--background) run_bg=true; shift;;
       *) die "Unknown: $1";;
@@ -114,95 +120,85 @@ refine_plan() {
     local log_file="$root/planning/.refine-${job_name}.log"
     note "Starting background job: $job_name"
     note "Log: $log_file"
-    tmux new-session -d -s "$job_name" "cd '$root' && flywheel refine --iters $iters --plan '$plan_in' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 5"
+    tmux new-session -d -s "$job_name" "cd '$root' && flywheel refine --max $max_iters --plan '$plan_in' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 5"
     note "Commands: flywheel jobs | flywheel logs $job_name | flywheel attach $job_name"
     return 0
   fi
 
   mkdir -p planning
-  note "Codex refinement: model=$FW_GPT_PLAN_MODEL iters=$iters"
   local prev="$plan_in"
-  for i in $(seq 1 "$iters"); do
+  local i=0
+  local approved=false
+
+  if [[ "$until_approved" == true ]]; then
+    note "Codex refinement: model=$FW_GPT_PLAN_MODEL (until approved, max=$max_iters)"
+  else
+    note "Codex refinement: model=$FW_GPT_PLAN_MODEL iters=$max_iters"
+  fi
+
+  while [[ $i -lt $max_iters ]]; do
+    i=$((i + 1))
     local next="planning/PLAN_codex_iter${i}.md"
-    note "Iteration $i: $prev -> $next"
-    codex exec --model "$FW_GPT_PLAN_MODEL" \
-      --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
-      --output-last-message "$next" \
-      "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."
-    prev="$next"
+    local verdict_file="/tmp/codex-verdict-$$.txt"
+
+    if [[ "$until_approved" == true ]]; then
+      note "Iteration $i: reviewing $prev"
+
+      codex exec --model "$FW_GPT_PLAN_MODEL" \
+        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
+        --output-last-message "$verdict_file" \
+        "Review this engineering plan file: ${prev}
+
+Your task:
+1. Check for: specificity, testability, parallelizability, completeness, clarity
+2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
+3. If the plan needs improvement, output an IMPROVED version of the entire plan (markdown only, no commentary)
+
+Be strict. Only approve if the plan is truly implementation-ready."
+
+      if grep -q "^APPROVED$" "$verdict_file" 2>/dev/null; then
+        note "✅ Plan APPROVED at iteration $i"
+        approved=true
+        rm -f "$verdict_file"
+        break
+      else
+        mv "$verdict_file" "$next"
+        note "  → Refined: $next"
+        prev="$next"
+      fi
+    else
+      note "Iteration $i: $prev -> $next"
+      codex exec --model "$FW_GPT_PLAN_MODEL" \
+        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
+        --output-last-message "$next" \
+        "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."
+      prev="$next"
+    fi
   done
+
   cp "$prev" planning/PLAN.md
+
+  if [[ "$until_approved" == true && "$approved" == false ]]; then
+    note "⚠️  Max iterations ($max_iters) reached without approval"
+    note "  Review planning/PLAN.md manually or run again with --max N"
+  fi
+
   note "Done: planning/PLAN.md"
 }
 
 make_beads() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local plan="planning/PLAN.md" min_beads="50" run_bg=false
+  local plan="planning/PLAN.md" min_beads="100"
   while [[ $# -gt 0 ]]; do
-    case "$1" in 
-      --plan) plan="$2"; shift 2;; 
-      --min-beads) min_beads="$2"; shift 2;; 
-      --bg|--background) run_bg=true; shift;;
-      *) die "Unknown: $1";; 
-    esac
+    case "$1" in --plan) plan="$2"; shift 2;; --min-beads) min_beads="$2"; shift 2;; *) die "Unknown: $1";; esac
   done
   cd "$root"
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
-
-  local session; session="beads-$(basename "$root")"
-  local prompt="You are a task decomposition expert. Read ${plan} and create Beads tasks.
-
-RULES:
-1. Create an EPIC first for the main feature
-2. Create ${min_beads}+ sub-tasks with clear acceptance criteria
-3. Use priorities: P1 (critical path), P2 (important), P3 (polish)
-4. Set dependencies between tasks using --parent
-
-COMMANDS:
-- br add -t epic -p P1 Epic Title Epic description
-- br add -t task -p P1 Task Title Detailed acceptance criteria
-- br update <id> --parent <epic-id>
-
-After creating all tasks, run: bv --robot-triage
-Then say BEADS_COMPLETE when done."
-
-  if [[ "$run_bg" == true ]]; then
-    local log_file="$root/planning/.beads-${session}.log"
-    note "Starting background beads job: $session"
-    note "Log: $log_file"
-    tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions --print '$prompt' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
-    note "Commands: flywheel jobs | flywheel logs $session | flywheel attach $session"
-    return 0
-  fi
-
-  note "Spawning beads creation session: $session"
-  
-  # Check if session exists
-  if tmux has-session -t "$session" 2>/dev/null; then
-    note "Session $session already exists. Attaching..."
-    tmux attach -t "$session"
-    return 0
-  fi
-
-  # Create new tmux session with claude
-  tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions"
-  sleep 3
-  
-  # Send the prompt
-  tmux send-keys -t "$session" "$prompt" Enter
-  
-  note "Beads creation started in session: $session"
-  note "Attach with: tmux attach -t $session"
-  note "Or: flywheel attach $session"
-  
-  # Ask if user wants to attach
-  read -p "Attach now? [Y/n] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    tmux attach -t "$session"
-  fi
+  note "Run manually:"
+  echo "  cc \"Read ${plan}. Create ${min_beads}+ beads with bd CLI.\""
+  echo "Then: bv --robot-triage"
 }
 
 startwork() {
@@ -215,19 +211,91 @@ startwork() {
   done
   cd "$root"
   local args=()
-  [[ "$cc_n" -gt 0 ]] && args+=(--cc="$cc_n")
+  [[ "$cc_n" -gt 0 ]] && args+=(--cc="${cc_n}:${FW_CLAUDE_MODEL}")
   [[ "$cod_n" -gt 0 ]] && args+=(--cod="$cod_n")
   [[ "$gmi_n" -gt 0 ]] && args+=(--gmi="$gmi_n")
-  note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n"
+  note "Spawning: $session cc=$cc_n ($FW_CLAUDE_MODEL) cod=$cod_n gmi=$gmi_n"
   ntm spawn "$session" "${args[@]}"
-  sleep 3
-  ntm send "$session" --no-cass-check --all "Swarm SOP: bv --robot-triage, claim bead, reserve files, implement, close bead, notify." || true
+  sleep 5
+
+  if [[ "$cc_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --cc= "AUTONOMOUS MODE. You are an architect/integrator agent.
+
+CRITICAL RULES:
+- NEVER ask questions. NEVER wait for input. NEVER stop working.
+- After EVERY task completion, IMMEDIATELY run bv --robot-next again.
+- If no tasks available, wait 30 seconds then check again.
+
+YOUR INFINITE LOOP:
+1. bv --robot-next
+2. br update <ID> --status=in_progress
+3. br show <ID>
+4. Implement (prefer cross-cutting work, refactors, integration)
+5. Run tests if applicable
+6. br close <ID>
+7. IMMEDIATELY go back to step 1. NEVER STOP.
+
+START NOW. Run: bv --robot-next" || true
+  fi
+
+  if [[ "$cod_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --cod= "AUTONOMOUS MODE. You are an implementation agent.
+
+ABSOLUTE RULES (violation = failure):
+- NEVER output 'Next steps' - just DO the next step
+- NEVER ask questions or wait for input
+- NEVER stop after completing a task
+- NEVER suggest coordination - just work on available beads
+- After closing a bead, IMMEDIATELY run bv --robot-next
+
+YOUR INFINITE LOOP (run forever, no exceptions):
+1. bv --robot-next
+2. br update <ID> --status=in_progress
+3. br show <ID>
+4. Implement + write tests
+5. br close <ID>
+6. echo 'CONTINUING...' && bv --robot-next  <-- DO THIS, don't suggest it
+
+If bead is reserved by another agent, skip it: bv --robot-next
+If no beads available, sleep 30 && bv --robot-next
+
+START NOW: bv --robot-next" || true
+    local cod_start=$((cc_n + 2))
+    local cod_end=$((cc_n + cod_n + 1))
+    for pane in $(seq "$cod_start" "$cod_end"); do
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
+  fi
+
+  if [[ "$gmi_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --gmi= "AUTONOMOUS MODE. You are a reviewer agent.
+
+CRITICAL RULES:
+- NEVER ask questions. NEVER wait for input. NEVER stop working.
+- After EVERY task completion, IMMEDIATELY run bv --robot-next again.
+- If no tasks available, wait 30 seconds then check again.
+
+YOUR INFINITE LOOP:
+1. bv --robot-next
+2. br show <ID>
+3. Review for edge cases, missing tests, bugs
+4. If issues: br create new beads. If clean: add approval comment.
+5. IMMEDIATELY go back to step 1. NEVER STOP.
+
+START NOW. Run: bv --robot-next" || true
+    local gmi_start=$((cc_n + cod_n + 2))
+    local gmi_end=$((cc_n + cod_n + gmi_n + 1))
+    for pane in $(seq "$gmi_start" "$gmi_end"); do
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
+  fi
+
   note "Attach: ntm attach $session"
 }
 
 list_jobs() {
-  note "Background jobs:"
-  tmux list-sessions 2>/dev/null | grep -E "^(refine-|beads-)" || echo "  None"
+  note "Background refine jobs:"
+  tmux list-sessions 2>/dev/null | grep -E "^refine-" || echo "  None"
   echo ""
   note "All sessions:"
   tmux list-sessions 2>/dev/null || echo "  None"
@@ -237,7 +305,7 @@ view_logs() {
   local job="${1:-}"
   local root; root="$(git_root 2>/dev/null || echo .)"
   if [[ -z "$job" ]]; then
-    local f; f=$(find "$root" -name ".refine-*.log" -o -name ".beads-*.log" 2>/dev/null | head -1)
+    local f; f=$(find "$root" -name ".refine-*.log" 2>/dev/null | head -1)
     [[ -n "$f" ]] && { note "Tailing: $f"; tail -f "$f"; } || die "No logs found"
   else
     local f; f=$(find "$root" -name "*${job}*.log" 2>/dev/null | head -1)
@@ -249,6 +317,213 @@ attach_job() {
   local job="${1:-}"
   [[ -n "$job" ]] || die "Specify job. Use 'flywheel jobs'"
   tmux has-session -t "$job" 2>/dev/null && tmux attach -t "$job" || die "No session: $job"
+}
+
+# Smart push that handles mismatched local/upstream branch names
+smart_push() {
+  local current_branch upstream_ref upstream_remote upstream_branch
+  
+  current_branch=$(git rev-parse --abbrev-ref HEAD)
+  upstream_ref=$(git rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null) || {
+    # No upstream configured - push to same-named branch
+    note "   No upstream configured, pushing to origin/$current_branch"
+    git push -u origin "$current_branch"
+    return $?
+  }
+  
+  # Extract remote and branch from upstream (e.g., "origin/urgood2/roguelike-1")
+  upstream_remote="${upstream_ref%%/*}"
+  upstream_branch="${upstream_ref#*/}"
+  
+  note "   Pushing $current_branch -> $upstream_remote/$upstream_branch"
+  git push "$upstream_remote" "HEAD:$upstream_branch"
+}
+
+finalize_work() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local do_push=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --push) do_push=true; shift;; *) die "Unknown: $1";; esac
+  done
+  cd "$root"
+
+  note "=== Finalization Checklist ==="
+
+  note "1. Checking open beads..."
+  local in_progress
+  in_progress=$(br list --status=in_progress 2>/dev/null | grep -c "^\[" 2>/dev/null) || in_progress=0
+  [[ "$in_progress" -gt 0 ]] && note "   ⚠️  $in_progress beads still in_progress" || note "   ✅ No beads in_progress"
+
+  if command -v ubs >/dev/null 2>&1; then
+    note "2. Running UBS scan..."
+    ubs . 2>/dev/null || note "   ⚠️  UBS found issues (review output)"
+  else
+    note "2. Skipping UBS (not installed)"
+  fi
+
+  note "3. Syncing beads..."
+  br sync --flush-only 2>/dev/null || true
+
+  note "4. Staging changes..."
+  git add -A
+  if ! git diff --cached --quiet; then
+    note "   Committing..."
+    git commit -m "Flywheel checkpoint: $(date +%Y-%m-%d\ %H:%M)" || true
+  else
+    note "   Nothing to commit"
+  fi
+
+  if [[ "$do_push" == true ]]; then
+    note "5. Pushing to remote..."
+    git pull --rebase || die "Pull failed - resolve conflicts first"
+    smart_push || die "Push failed"
+    note "   ✅ Pushed successfully"
+  else
+    note "5. Skipping push (use --push or 'flywheel sync')"
+  fi
+
+  note "6. Final status:"
+  git status --short
+  note "=== Finalization complete ==="
+}
+
+sync_to_remote() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  cd "$root"
+
+  note "=== Full Sync ==="
+  finalize_work --push
+  note "=== Sync complete - ready for local pull ==="
+  note "On local machine run: git pull"
+}
+
+run_qa() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local project; project="$(basename "$root")"
+  local session="${project}-qa"
+  cd "$root"
+
+  note "Spawning QA agent (Opus) in session: $session"
+
+  tmux kill-session -t "$session" 2>/dev/null || true
+
+  local prompt_file="/tmp/flywheel-qa-prompt-$$.md"
+  cat > "$prompt_file" << 'QAPROMPT'
+You are a QA AGENT. Verify this codebase is ready for sync. Execute these steps IN ORDER:
+
+1. Check project structure: ls -la && cat Justfile 2>/dev/null | head -30
+
+2. Build: just build-release || cmake --build build --config Release || echo "No build system"
+
+3. Run tests:
+   - just test || echo "No unit tests"
+   - just test-descent || echo "No descent tests"
+
+4. Bug scan: ubs . 2>&1 | tail -30
+
+5. Bead status: br list --status=open | head -15
+
+6. For ANY test failures or critical UBS issues, create beads:
+   br create "Fix: <description>" -t bug -p 1
+
+7. Write planning/QA_REPORT.md with: build status, test summary, UBS summary, open bead count, and verdict (READY TO SYNC or NEEDS FIXES)
+
+8. Output: QA COMPLETE
+
+START NOW - run step 1.
+QAPROMPT
+
+  tmux new-session -d -s "$session" -c "$root"
+  tmux send-keys -t "$session" "cd '$root' && claude --dangerously-skip-permissions --model opus" Enter
+  sleep 5
+
+  local prompt
+  prompt=$(cat "$prompt_file")
+  rm -f "$prompt_file"
+
+  tmux send-keys -t "$session" "$prompt"
+  sleep 0.5
+  tmux send-keys -t "$session" Enter
+
+  note "QA agent started in session: $session"
+  note "  Attach: tmux attach -t $session"
+  note "  Check:  cat planning/QA_REPORT.md"
+}
+
+is_pane_idle() {
+  local session="$1" pane="$2"
+  local output
+  output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -10 2>/dev/null) || return 1
+
+  if echo "$output" | grep -qiE "(next steps|what.*should|which.*should|shall i|want me to|waiting for|please confirm|let me know|─────$|^\s*$)" 2>/dev/null; then
+    return 0
+  fi
+
+  if echo "$output" | grep -qE "(\.{3}|⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏|Running|Executing|Writing|Reading|Searching)" 2>/dev/null; then
+    return 1
+  fi
+
+  if echo "$output" | grep -qE "^\$|^>|^claude>|^codex>" 2>/dev/null; then
+    local last_line
+    last_line=$(echo "$output" | tail -1)
+    if [[ -z "$last_line" || "$last_line" =~ ^[[:space:]]*$ ]]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+nudge_agents() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+  local session; session="$(basename "$root")"
+  local force=false
+  [[ "${1:-}" == "--force" ]] && force=true
+
+  note "Checking agents in session: $session"
+
+  local nudged=0
+  local skipped=0
+  set +e
+
+  for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
+    local pane_title
+    pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
+
+    if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
+      note "  Nudging pane $pane ($pane_title)"
+
+      if [[ "$pane_title" == *"_cod_"* ]]; then
+        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
+        sleep 0.2
+        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+      elif [[ "$pane_title" == *"_gmi_"* ]]; then
+        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
+        sleep 0.2
+        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+      elif [[ "$pane_title" == *"_cc_"* ]]; then
+        tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
+      fi
+      nudged=$((nudged + 1))
+    else
+      note "  Skipping pane $pane ($pane_title) - working"
+      skipped=$((skipped + 1))
+    fi
+  done
+
+  set -e
+  note "Nudged: $nudged | Skipped (working): $skipped"
+}
+
+start_watchdog() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local session; session="$(basename "$root")"
+  local interval="${1:-60}"
+
+  note "Starting watchdog: session=$session interval=${interval}s"
+  note "Run in background with: flywheel watchdog $interval &"
+  exec flywheel-watchdog "$session" "$interval"
 }
 
 main() {
@@ -264,6 +539,11 @@ main() {
     jobs) list_jobs;;
     logs) view_logs "${1:-}";;
     attach) attach_job "${1:-}";;
+    finalize) finalize_work "$@";;
+    sync) sync_to_remote;;
+    qa) run_qa;;
+    nudge) nudge_agents;;
+    watchdog) start_watchdog "${1:-60}";;
     ""|-h|--help|help) usage;;
     *) usage; die "Unknown: $cmd";;
   esac
