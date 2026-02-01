@@ -155,6 +155,9 @@ $interview_prompt"
   fi
 
   ntm send "$session" --no-cass-check --all "$interview_prompt" || true
+  # Send Enter to submit the prompt (pane 2 is the agent)
+  sleep 0.3
+  tmux send-keys -t "${session}:1.2" Enter 2>/dev/null || true
   note "Attaching..."
   ntm attach "$session"
 }
