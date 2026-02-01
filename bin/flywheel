@@ -645,6 +645,8 @@ nudge_agents() {
         tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
       elif [[ "$pane_title" == *"_cc_"* ]]; then
         tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
+        sleep 0.2
+        tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
       fi
       nudged=$((nudged + 1))
     else
