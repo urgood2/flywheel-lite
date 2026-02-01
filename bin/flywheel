@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ----------------------------
+# Flywheel‑Lite (Agent Flywheel glue)
+# FIXED: ntm session naming, apr workflow, agent counts
+# ----------------------------
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+note() { echo "==> $*" >&2; }
+
+load_config() {
+  local repo_root="${1:-}"
+  if [[ -f "$HOME/.config/flywheel/config.env" ]]; then
+    source "$HOME/.config/flywheel/config.env"
+  fi
+  if [[ -n "$repo_root" && -f "$repo_root/.flywheel/config.env" ]]; then
+    source "$repo_root/.flywheel/config.env"
+  fi
+
+  : "${FW_INTERVIEW_ROUNDS:=2}"
+  : "${FW_PLAN_ITERS:=3}"
+  : "${FW_CC:=3}"
+  : "${FW_COD:=2}"
+  : "${FW_GMI:=1}"
+  : "${FW_CLAUDE_MODEL:=opus}"
+  : "${FW_CODEX_IMPL_MODEL:=gpt-5.2-codex}"
+  : "${FW_GPT_PLAN_MODEL:=gpt-5.2}"
+  : "${FW_CODEX_REASONING:=high}"
+  : "${FW_GEMINI_MODEL:=gemini-2.5-pro}"
+  : "${FW_SAFE:=0}"
+}
+
+git_root() {
+  git rev-parse --show-toplevel 2>/dev/null || return 1
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Missing dependency: $1"
+}
+
+usage() {
+  cat >&2 <<'USAGE'
+flywheel — oh-my-opencode style workflow on top of Agent Flywheel tools
+
+Usage:
+  flywheel doctor
+  flywheel checkout <branch> [<base-branch>]
+  flywheel init
+  flywheel plan [--rounds N]
+  flywheel refine [--iters N] [--plan planning/PLAN_v0.md]
+  flywheel beads [--plan planning/PLAN.md] [--min-beads N]
+  flywheel startwork [--cc N] [--cod N] [--gmi N]
+
+Notes:
+- Run these inside a Git repo in /data/projects/
+- Session names match the project directory name
+USAGE
+}
+
+doctor() {
+  note "Checking core dependencies…"
+  require_cmd git
+  require_cmd tmux
+  require_cmd ntm
+  require_cmd bd
+  require_cmd bv
+  require_cmd apr
+  require_cmd ubs
+  require_cmd claude
+  require_cmd codex
+  require_cmd gemini
+
+  note "Running: ntm deps -v"
+  ntm deps -v
+
+  note "OK: basic toolchain present."
+}
+
+checkout_branch() {
+  local branch="${1:-}"; local base="${2:-}"
+  [[ -n "$branch" ]] || die "checkout requires <branch>"
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  cd "$root"
+  git fetch --all --prune
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    note "Checking out existing local branch: $branch"
+    git checkout "$branch"
+    return 0
+  fi
+
+  if git show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    note "Creating local tracking branch from origin/$branch"
+    git checkout -b "$branch" --track "origin/$branch"
+    return 0
+  fi
+
+  if [[ -z "${base}" ]]; then
+    base="$(git rev-parse --abbrev-ref HEAD)"
+  fi
+  note "Creating new branch: $branch (from $base)"
+  git checkout "$base"
+  git pull --ff-only || true
+  git checkout -b "$branch"
+}
+
+init_repo() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  cd "$root"
+  mkdir -p .flywheel planning
+
+  if [[ ! -f .flywheel/config.env ]]; then
+    cat > .flywheel/config.env <<EOF
+# Repo-local Flywheel‑Lite overrides (optional)
+# FW_CC=3
+# FW_COD=2
+# FW_GMI=1
+EOF
+  fi
+
+  note "Initializing Beads…"
+  bd init || true
+
+  note "Setting Beads export branch to beads-sync…"
+  bd config set sync.branch beads-sync 2>/dev/null || true
+
+  if [[ ! -f AGENTS.md ]]; then
+    cat > AGENTS.md <<'AGENTSMD'
+# AGENTS.md
+
+This repo is worked on by multiple coding agents (Claude Code, Codex, Gemini) via NTM.
+
+## Coordination (Agent Mail)
+- Use Agent Mail MCP tools for coordination and review requests.
+- Before editing files, reserve them (exclusive) via Agent Mail.
+- When you finish, release/let TTL expire and message dependents.
+
+## Beads workflow
+- Tasks are tracked in Beads (bd). Always:
+  1) Triage what is ready with BV
+  2) Claim a bead (set status in_progress)
+  3) Implement + tests
+  4) Close the bead and notify via Agent Mail
+
+## Guardrails
+- Run UBS before committing.
+- Prefer small, atomic commits unless a refactor demands otherwise.
+AGENTSMD
+    note "Wrote AGENTS.md (minimal template)."
+  else
+    note "AGENTS.md already exists; leaving it untouched."
+  fi
+
+  note "Repo initialized. Next: flywheel plan"
+}
+
+plan_session() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  local rounds="${1:-$FW_INTERVIEW_ROUNDS}"
+  # FIXED: Use repo basename as session name (ntm requirement)
+  local session
+  session="$(basename "$root")"
+
+  cd "$root"
+
+  note "Spawning planning session: $session (1 Claude pane)"
+  ntm spawn "$session" --cc=1
+
+  local prompt
+  prompt=$(cat <<EOF
+You are the INTERVIEWER (requirements + product + architecture).
+
+Run an interactive interview in exactly ${rounds} rounds:
+- Round 1: ask the highest-leverage questions (scope, constraints, success criteria, existing architecture, risk).
+- Round 2..N: ask only clarification questions based on my answers; resolve ambiguities; lock down acceptance tests.
+
+Rules:
+- Be crisp. Ask numbered questions. Wait for answers.
+- After the final round, write TWO files:
+  1) planning/INTERVIEW_TRANSCRIPT.md (Q/A + assumptions)
+  2) planning/PLAN_v0.md (a complete implementable plan, self-contained, with milestones, tests, and exact commands)
+
+Make the plan optimized for multi-agent execution via Beads:
+- Identify epics, tasks, and dependencies.
+- Mark what can be parallelized safely vs what must be sequential.
+EOF
+)
+
+  note "Sending interviewer prompt to Claude pane…"
+  sleep 3  # FIXED: Wait for pane to be ready
+  ntm send "$session" --no-cass-check --all "$prompt" || {
+    note "ntm send failed; try manual attach + paste prompt."
+  }
+
+  note "Attaching to session. Do the interview in the cc pane."
+  ntm attach "$session"
+}
+
+refine_plan() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  local iters="$FW_PLAN_ITERS"
+  local plan_in="planning/PLAN_v0.md"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --iters) iters="$2"; shift 2;;
+      --plan)  plan_in="$2"; shift 2;;
+      *) die "Unknown arg: $1";;
+    esac
+  done
+
+  cd "$root"
+  [[ -f "$plan_in" ]] || die "Missing plan file: $plan_in (run: flywheel plan)"
+
+  mkdir -p planning
+
+  # FIXED: APR uses a different workflow. Skip APR for now, use Codex directly.
+  note "Skipping APR (requires manual setup). Using Codex refinement loop directly."
+  note "To use APR manually: apr setup, then apr run 1, apr run 2, etc."
+
+  local prev="$plan_in"
+  local model="$FW_GPT_PLAN_MODEL"
+  local reasoning="$FW_CODEX_REASONING"
+
+  note "Codex plan refinement loop: model=$model reasoning=$reasoning iters=$iters"
+  for i in $(seq 1 "$iters"); do
+    local next="planning/PLAN_codex_iter${i}.md"
+    note "Iteration $i: $prev -> $next"
+
+    codex exec \
+      --model "$model" \
+      --config "model_reasoning_effort=\"${reasoning}\"" \
+      --output-last-message "$next" \
+      "Read ${prev} carefully. Rewrite it into a strictly better engineering plan.
+
+Constraints:
+- Output MUST be Markdown only (no preamble).
+- Preserve intent but increase specificity, testability, and parallelizability.
+- Add missing edge cases, failure modes, rollout plan, and exact commands.
+- Ensure the plan can be executed by multiple agents using Beads (clear task decomposition + dependencies).
+- Avoid hand-wavy language. Every step must be actionable.
+
+Return ONLY the improved plan."
+    prev="$next"
+  done
+
+  # Copy final iteration as PLAN.md
+  cp "$prev" planning/PLAN.md
+  note "Done. Final plan: planning/PLAN.md"
+}
+
+make_beads() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  local plan="planning/PLAN.md"
+  local min_beads="100"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan) plan="$2"; shift 2;;
+      --min-beads) min_beads="$2"; shift 2;;
+      *) die "Unknown arg: $1";;
+    esac
+  done
+
+  cd "$root"
+  [[ -f "$plan" ]] || die "Missing plan file: $plan (run: flywheel refine)"
+
+  note "Ensuring beads initialized…"
+  bd init 2>/dev/null || true
+
+  note "Plan -> beads is best done by a strong planner (Claude)."
+  cat >&2 <<EOF
+
+Next command (run it manually so you can supervise):
+
+  cc "Read ${plan} carefully.
+  Transform each section into Beads using the bd CLI.
+  Create epics for major phases, then tasks.
+  Encode dependencies so blockers are clear.
+  Use priorities (P0 foundation, P1 core, P2 secondary, P3+ polish).
+  Create at least ${min_beads} beads. Add comments so each bead is self-contained."
+
+Afterwards:
+  bv --robot-triage
+EOF
+}
+
+startwork() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+
+  # FIXED: Use repo basename as session name (ntm requirement)
+  local session
+  session="$(basename "$root")"
+  local cc_n="$FW_CC"
+  local cod_n="$FW_COD"
+  local gmi_n="$FW_GMI"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cc) cc_n="$2"; shift 2;;
+      --cod) cod_n="$2"; shift 2;;
+      --gmi) gmi_n="$2"; shift 2;;
+      *) die "Unknown arg: $1";;
+    esac
+  done
+
+  cd "$root"
+
+  # FIXED: Only pass agent flags if count > 0
+  local spawn_args=()
+  [[ "$cc_n" -gt 0 ]] && spawn_args+=(--cc="$cc_n")
+  [[ "$cod_n" -gt 0 ]] && spawn_args+=(--cod="$cod_n")
+  [[ "$gmi_n" -gt 0 ]] && spawn_args+=(--gmi="$gmi_n")
+
+  note "Spawning swarm: session=$session cc=$cc_n cod=$cod_n gmi=$gmi_n"
+  ntm spawn "$session" "${spawn_args[@]}"
+
+  sleep 3  # Wait for panes to be ready
+
+  # Baseline SOP for everyone
+  ntm send "$session" --no-cass-check --all "Swarm SOP:
+1) Run: bv --robot-triage  (see what is ready)
+2) Claim ONE bead: bd update <id> --status in_progress
+3) Before editing files: reserve them via Agent Mail (exclusive)
+4) Implement + tests; run relevant commands
+5) Close: bd close <id>
+6) Notify dependents/reviewers via Agent Mail
+Repeat."
+
+  # Role prompts
+  if [[ "$cc_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --cc "Role: integration + architecture.
+Prefer larger refactors and cross-cutting changes.
+Default model target: Claude ${FW_CLAUDE_MODEL}.
+Always coordinate risky refactors via Agent Mail and reserve files before editing."
+  fi
+
+  if [[ "$cod_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --cod "Role: implementation + tests.
+Prefer self-contained beads.
+Default model target: ${FW_CODEX_IMPL_MODEL}.
+Reasoning effort: ${FW_CODEX_REASONING} (raise to xhigh only for hardest tasks).
+Ask for review via Agent Mail when a bead is ready to close."
+  fi
+
+  if [[ "$gmi_n" -gt 0 ]]; then
+    ntm send "$session" --no-cass-check --gmi "Role: reviewer.
+Look for edge cases, missing tests, unclear docs. Request fixes via Agent Mail.
+Default model target: ${FW_GEMINI_MODEL}.
+Do NOT implement features unless explicitly asked; focus on critique + verification."
+  fi
+
+  note "Attach with: ntm attach $session"
+  note "Tip: Keep one agent as a commit agent if swarm is large."
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+
+  case "$cmd" in
+    doctor) doctor ;;
+    checkout) checkout_branch "${@}" ;;
+    init) init_repo ;;
+    plan)
+      local rounds=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --rounds) rounds="$2"; shift 2;;
+          *) die "Unknown arg: $1";;
+        esac
+      done
+      plan_session "${rounds:-}"
+      ;;
+    refine) refine_plan "$@" ;;
+    beads)  make_beads "$@" ;;
+    startwork) startwork "$@" ;;
+    ""|-h|--help|help) usage ;;
+    *) usage; die "Unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
