@@ -520,14 +520,36 @@ list_jobs() {
 is_pane_idle() {
   local session="$1" pane="$2"
   local output
-  output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -10 2>/dev/null) || return 1
-  if echo "$output" | grep -qiE "(next steps|what.*should|shall i|want me to|waiting for|please confirm|let me know)" 2>/dev/null; then
-    return 0
+  output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -15 2>/dev/null) || return 1
+  
+  # Check for active work indicators first (not idle)
+  if echo "$output" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing)" 2>/dev/null; then
+    return 1  # Working
   fi
-  if echo "$output" | grep -qE "(Running|Executing|Writing|Reading|Searching)" 2>/dev/null; then
-    return 1
+  
+  # Claude idle patterns
+  if echo "$output" | grep -qiE "(next steps|what.*should|shall i|want me to|waiting for|please confirm|let me know|ready to|can i help)" 2>/dev/null; then
+    return 0  # Idle
   fi
-  return 1
+  
+  # Codex idle patterns - prompt waiting for input
+  # Codex shows "› " when waiting for input, and "context left" in status
+  if echo "$output" | grep -qE "^› |context left\$|% context" 2>/dev/null; then
+    # Check if last non-empty line is a prompt or status line
+    local last_content
+    last_content=$(echo "$output" | grep -v "^[[:space:]]*\$" | tail -3)
+    # If we see the prompt character and no active spinner/work, its idle
+    if echo "$last_content" | grep -qE "^› |context left|Worked for [0-9]+s" 2>/dev/null; then
+      return 0  # Idle - Codex at prompt
+    fi
+  fi
+  
+  # Gemini idle patterns
+  if echo "$output" | grep -qiE "(i can help|would you like|let me know|ready for)" 2>/dev/null; then
+    return 0  # Idle
+  fi
+  
+  return 1  # Assume working by default
 }
 
 nudge_agents() {
@@ -547,9 +569,13 @@ nudge_agents() {
     
     if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
       note "  Nudging pane $pane ($pane_title)"
-      tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
-      sleep 0.2
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+      # Different nudge messages based on agent type
+      local nudge_msg="CONTINUE. Pick up a task with bv --robot-next and implement it completely."
+      if [[ "$pane_title" == *"cod"* ]]; then
+        nudge_msg="You are an autonomous coding agent. Run: bv --robot-next to get your task, then implement it fully. Do NOT wait for confirmation - just code."
+      fi
+      tmux send-keys -t "${session}:1.${pane}" "$nudge_msg" Enter
+      sleep 0.3
       nudged=$((nudged + 1))
     else
       note "  Skipping pane $pane - working"
