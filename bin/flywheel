@@ -67,7 +67,8 @@ Usage:
   flywheel checkout <branch> [base]
   flywheel init
   flywheel plan [--rounds N]
-  flywheel refine [--iters N] [--plan FILE]    # Runs in tmux, attach/detach safe
+  flywheel refine [--max N] [--plan FILE]     # Approval mode (default), tmux session
+  flywheel refine --iters N                  # Fixed iterations mode (legacy)
   flywheel beads [--plan FILE] [--min-beads N]
   flywheel compete                              # Generate 4 competing plans + synthesize
   flywheel startwork [--cc N] [--cod N] [--gmi N]
@@ -147,7 +148,7 @@ find_latest_iter() {
 
 # The actual refine loop (runs inside tmux)
 _refine_loop() {
-  local root="$1" iters="$2" plan_in="$3" start_iter="$4"
+  local root="$1" max_iters="$2" plan_in="$3" start_iter="$4" until_approved="$5"
   
   cd "$root"
   source "$HOME/.config/flywheel/config.env" 2>/dev/null || true
@@ -156,50 +157,102 @@ _refine_loop() {
   mkdir -p planning .flywheel
   
   local prev="$plan_in"
-  for i in $(seq "$start_iter" "$iters"); do
+  local i="$start_iter"
+  local approved=false
+
+  if [[ "$until_approved" == "true" ]]; then
+    echo ""
+    echo "Mode: APPROVAL (iterate until plan is approved, max=$max_iters)"
+  else
+    echo ""
+    echo "Mode: FIXED ($max_iters iterations)"
+  fi
+  echo ""
+
+  while [[ $i -le $max_iters ]]; do
     local next="planning/PLAN_codex_iter${i}.md"
+    local verdict_file="/tmp/codex-verdict-$$.txt"
     
-    # Save state
     cat > "$root/.flywheel/refine-state.json" <<EOF
-{"current_iter": $i, "total_iters": $iters, "plan_in": "$prev", "timestamp": "$(date -Iseconds)", "status": "in_progress"}
+{"current_iter": $i, "total_iters": $max_iters, "plan_in": "$prev", "until_approved": $until_approved, "timestamp": "$(date -Iseconds)", "status": "in_progress"}
 EOF
     
     echo ""
     echo "════════════════════════════════════════════════════════════"
-    echo "  ITERATION $i / $iters"
+    echo "  ITERATION $i / $max_iters"
     echo "  Input: $prev"
-    echo "  Output: $next"
+    if [[ "$until_approved" == "true" ]]; then
+      echo "  Mode: Approval (stop early if APPROVED)"
+    fi
     echo "════════════════════════════════════════════════════════════"
     echo ""
-    
-    if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
-      --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
-      --output-last-message "$next" \
-      "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."; then
-      echo ""
-      echo "ERROR: Iteration $i failed!"
-      echo "State saved. Restart with: flywheel refine"
-      read -p "Press Enter to exit..."
-      return 1
+
+    if [[ "$until_approved" == "true" ]]; then
+      if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
+        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
+        --output-last-message "$verdict_file" \
+        "Review this engineering plan file: ${prev}
+
+Your task:
+1. Check for: specificity, testability, parallelizability, completeness, clarity
+2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
+3. If the plan needs improvement, output an IMPROVED version of the entire plan (markdown only, no commentary)
+
+Be strict. Only approve if the plan is truly implementation-ready."; then
+        echo ""
+        echo "ERROR: Iteration $i failed!"
+        echo "State saved. Restart with: flywheel refine"
+        read -p "Press Enter to exit..."
+        return 1
+      fi
+      
+      if grep -q "^APPROVED$" "$verdict_file" 2>/dev/null; then
+        echo ""
+        echo "✅ Plan APPROVED at iteration $i"
+        approved=true
+        rm -f "$verdict_file"
+        break
+      else
+        mv "$verdict_file" "$next"
+        echo "  → Refined: $next ($(wc -c < "$next") bytes)"
+        prev="$next"
+      fi
+    else
+      if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
+        --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
+        --output-last-message "$next" \
+        "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."; then
+        echo ""
+        echo "ERROR: Iteration $i failed!"
+        echo "State saved. Restart with: flywheel refine"
+        read -p "Press Enter to exit..."
+        return 1
+      fi
+      
+      prev="$next"
+      echo "✓ Iteration $i complete: $next ($(wc -c < "$next") bytes)"
     fi
     
-    prev="$next"
-    echo ""
-    echo "✓ Iteration $i complete: $next ($(wc -c < "$next") bytes)"
+    i=$((i + 1))
   done
   
   cp "$prev" planning/PLAN.md
   
-  # Mark complete
   cat > "$root/.flywheel/refine-state.json" <<EOF
-{"current_iter": $iters, "total_iters": $iters, "plan_in": "$prev", "timestamp": "$(date -Iseconds)", "status": "complete"}
+{"current_iter": $((i > max_iters ? max_iters : i)), "total_iters": $max_iters, "plan_in": "$prev", "until_approved": $until_approved, "approved": $approved, "timestamp": "$(date -Iseconds)", "status": "complete"}
 EOF
   
   echo ""
   echo "════════════════════════════════════════════════════════════"
-  echo "  REFINEMENT COMPLETE"
+  if [[ "$approved" == "true" ]]; then
+    echo "  ✅ REFINEMENT COMPLETE (APPROVED)"
+  elif [[ "$until_approved" == "true" ]]; then
+    echo "  ⚠️  REFINEMENT COMPLETE (max iterations reached, NOT approved)"
+    echo "  Review planning/PLAN.md manually or run again with higher --max"
+  else
+    echo "  REFINEMENT COMPLETE"
+  fi
   echo "  Final plan: planning/PLAN.md ($(wc -c < planning/PLAN.md) bytes)"
-  echo "  Total iterations: $iters"
   echo "════════════════════════════════════════════════════════════"
   echo ""
   echo "Next: flywheel beads"
@@ -210,11 +263,13 @@ EOF
 refine_plan() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local iters="$FW_PLAN_ITERS" plan_in="planning/PLAN_v0.md"
+  local max_iters="${FW_PLAN_ITERS:-10}" plan_in="planning/PLAN_v0.md" until_approved=true
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --iters) iters="$2"; shift 2;;
+      --iters) max_iters="$2"; until_approved=false; shift 2;;
+      --max) max_iters="$2"; shift 2;;
       --plan) plan_in="$2"; shift 2;;
+      --no-approve) until_approved=false; shift;;
       --_loop) shift; _refine_loop "$@"; return;;
       *) die "Unknown: $1";;
     esac
@@ -224,7 +279,6 @@ refine_plan() {
   local session="refine-$(basename "$root")"
   local start_iter=1
   
-  # Check for existing session
   if tmux has-session -t "$session" 2>/dev/null; then
     note "Refine session already running: $session"
     note "Attaching... (Ctrl+B D to detach)"
@@ -233,42 +287,43 @@ refine_plan() {
     return 0
   fi
   
-  # Check for interrupted refine
   local state_file="$root/.flywheel/refine-state.json"
   if [[ -f "$state_file" ]]; then
-    local status=$(grep -oP '(?<="status": ")[^"]*' "$state_file" 2>/dev/null || echo "")
+    local status=$(grep -oP '"status":\s*"\K[^"]*' "$state_file" 2>/dev/null || echo "")
     if [[ "$status" == "in_progress" ]]; then
       local latest_iter=$(find_latest_iter "$root")
       if [[ "$latest_iter" -gt 0 ]]; then
         note "Found interrupted refine at iteration $latest_iter"
         plan_in="planning/PLAN_codex_iter${latest_iter}.md"
         start_iter=$((latest_iter + 1))
-        local saved_total=$(grep -oP '(?<="total_iters": )[0-9]+' "$state_file" 2>/dev/null || echo "$iters")
-        [[ "$saved_total" -gt "$iters" ]] && iters="$saved_total"
-        note "Resuming from iteration $start_iter (target: $iters)"
+        local saved_total=$(grep -oP '"total_iters":\s*\K[0-9]+' "$state_file" 2>/dev/null || echo "$max_iters")
+        [[ "$saved_total" -gt "$max_iters" ]] && max_iters="$saved_total"
+        local saved_approve=$(grep -oP '"until_approved":\s*\K[a-z]+' "$state_file" 2>/dev/null || echo "true")
+        until_approved="$saved_approve"
+        note "Resuming from iteration $start_iter (max: $max_iters, approval: $until_approved)"
       fi
     elif [[ "$status" == "complete" ]]; then
       note "Previous refine completed. Starting fresh."
-      note "Use --plan to specify a different starting point"
     fi
   fi
   
   [[ -f "$plan_in" ]] || die "Missing: $plan_in"
   
   note "Starting refine session: $session"
-  note "Iterations: $start_iter to $iters"
+  if [[ "$until_approved" == "true" ]]; then
+    note "Mode: APPROVAL (until approved, max $max_iters)"
+  else
+    note "Mode: FIXED ($max_iters iterations)"
+  fi
   note "Input: $plan_in"
   echo ""
-  note "Detach anytime with: Ctrl+B D"
-  note "Reattach with: flywheel attach"
+  note "Detach: Ctrl+B D | Reattach: flywheel attach"
   echo ""
   sleep 2
   
-  # Start tmux session with refine loop
   tmux new-session -d -s "$session" \
-    "cd '$root' && flywheel refine --_loop '$root' $iters '$plan_in' $start_iter"
+    "cd '$root' && flywheel refine --_loop '$root' $max_iters '$plan_in' $start_iter $until_approved"
   
-  # Attach to it
   tmux attach -t "$session"
 }
 
@@ -341,38 +396,43 @@ startwork() {
   note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n"
   ntm spawn "$session" "${args[@]}"
   sleep 3
-  # Send prompts to each agent type
+  
+  # Pane layout: 1=shell, 2..(cc_n+1)=Claude, (cc_n+2)..(cc_n+cod_n+1)=Codex, etc.
+  local pane=2
+  
+  # Send prompts to Claude agents (panes 2 to cc_n+1)
   if [[ "$cc_n" -gt 0 ]]; then
     local cc_prompt
     cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Integrator. START: bv --robot-next")
-    ntm send "$session" --no-cass-check --cc= "$cc_prompt" || true
-    for pane in $(seq 2 $((cc_n + 1))); do
-      sleep 0.3
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    for i in $(seq 1 "$cc_n"); do
+      note "Sending prompt to Claude pane $pane"
+      tmux send-keys -t "${session}:1.${pane}" "$cc_prompt" Enter
+      sleep 0.5
+      pane=$((pane + 1))
     done
   fi
   
+  # Send prompts to Codex agents
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
     cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: bv --robot-next")
-    ntm send "$session" --no-cass-check --cod= "$cod_prompt" || true
-    local cod_start=$((cc_n + 2))
-    local cod_end=$((cc_n + cod_n + 1))
-    for pane in $(seq "$cod_start" "$cod_end"); do
-      sleep 0.2
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    for i in $(seq 1 "$cod_n"); do
+      note "Sending prompt to Codex pane $pane"
+      tmux send-keys -t "${session}:1.${pane}" "$cod_prompt" Enter
+      sleep 0.5
+      pane=$((pane + 1))
     done
   fi
   
+  # Send prompts to Gemini agents
   if [[ "$gmi_n" -gt 0 ]]; then
     local gmi_prompt
     gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer. START: bv --robot-next")
-    ntm send "$session" --no-cass-check --gmi= "$gmi_prompt" || true
-    local gmi_start=$((cc_n + cod_n + 2))
-    local gmi_end=$((cc_n + cod_n + gmi_n + 1))
-    for pane in $(seq "$gmi_start" "$gmi_end"); do
-      sleep 0.2
-      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    for i in $(seq 1 "$gmi_n"); do
+      note "Sending prompt to Gemini pane $pane"
+      tmux send-keys -t "${session}:1.${pane}" "$gmi_prompt" Enter
+      sleep 0.5
+      pane=$((pane + 1))
     done
   fi
   note "Attach: ntm attach $session"
