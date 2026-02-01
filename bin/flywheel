@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Flywheel-Lite with resumable refinement
+# Flywheel-Lite with persistent tmux sessions
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
@@ -27,17 +27,15 @@ Usage:
   flywheel checkout <branch> [base]
   flywheel init
   flywheel plan [--rounds N]
-  flywheel refine [--iters N] [--plan FILE] [--bg] [--resume]
-  flywheel beads [--plan FILE] [--min-beads N] [--bg]
+  flywheel refine [--iters N] [--plan FILE]    # Runs in tmux, attach/detach safe
+  flywheel beads [--plan FILE] [--min-beads N]
   flywheel startwork [--cc N] [--cod N] [--gmi N]
-  flywheel status                  # Show refine/beads progress
-  flywheel jobs                    # List background jobs
-  flywheel logs [job-name]         # Tail job log
-  flywheel attach <job-name>       # Attach to background job
+  flywheel status                              # Show refine/beads progress
+  flywheel attach [session]                    # Attach to refine/beads session
+  flywheel jobs                                # List all sessions
 
-Options:
-  --bg      Run in background tmux session
-  --resume  Resume interrupted refine from last checkpoint
+Refine runs in a persistent tmux session. Detach with Ctrl+B D, reattach with:
+  flywheel attach
 USAGE
 }
 
@@ -96,164 +94,151 @@ plan_session() {
   ntm attach "$session"
 }
 
-# Save refine state for resume
-save_refine_state() {
-  local root="$1" current_iter="$2" total_iters="$3" plan_in="$4"
-  mkdir -p "$root/.flywheel"
-  cat > "$root/.flywheel/refine-state.json" <<EOF
-{
-  "current_iter": $current_iter,
-  "total_iters": $total_iters,
-  "plan_in": "$plan_in",
-  "timestamp": "$(date -Iseconds)",
-  "status": "in_progress"
-}
-EOF
-}
-
-# Load refine state
-load_refine_state() {
-  local root="$1"
-  local state_file="$root/.flywheel/refine-state.json"
-  if [[ -f "$state_file" ]]; then
-    cat "$state_file"
-  else
-    echo "{}"
-  fi
-}
-
-# Mark refine complete
-complete_refine_state() {
-  local root="$1"
-  local state_file="$root/.flywheel/refine-state.json"
-  if [[ -f "$state_file" ]]; then
-    local tmp=$(mktemp)
-    sed 's/"status": "in_progress"/"status": "complete"/' "$state_file" > "$tmp"
-    mv "$tmp" "$state_file"
-  fi
-}
-
-# Find latest iteration file
 find_latest_iter() {
   local root="$1"
   local latest=$(ls -t "$root/planning/PLAN_codex_iter"*.md 2>/dev/null | head -1)
   if [[ -n "$latest" ]]; then
-    # Extract iteration number
     echo "$latest" | grep -oE 'iter[0-9]+' | grep -oE '[0-9]+'
   else
     echo "0"
   fi
 }
 
-refine_plan() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  load_config "$root"
-  local iters="$FW_PLAN_ITERS" plan_in="planning/PLAN_v0.md" run_bg=false do_resume=false
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --iters) iters="$2"; shift 2;;
-      --plan) plan_in="$2"; shift 2;;
-      --bg|--background) run_bg=true; shift;;
-      --resume) do_resume=true; shift;;
-      *) die "Unknown: $1";;
-    esac
-  done
+# The actual refine loop (runs inside tmux)
+_refine_loop() {
+  local root="$1" iters="$2" plan_in="$3" start_iter="$4"
+  
   cd "$root"
-
-  # Handle resume
-  local start_iter=1
-  if [[ "$do_resume" == true ]]; then
-    local state=$(load_refine_state "$root")
-    local saved_status=$(echo "$state" | grep -oP '(?<="status": ")[^"]*' 2>/dev/null || echo "")
-    
-    if [[ "$saved_status" == "in_progress" ]]; then
-      local saved_iter=$(echo "$state" | grep -oP '(?<="current_iter": )[0-9]+' 2>/dev/null || echo "0")
-      local saved_total=$(echo "$state" | grep -oP '(?<="total_iters": )[0-9]+' 2>/dev/null || echo "$iters")
-      local saved_plan=$(echo "$state" | grep -oP '(?<="plan_in": ")[^"]*' 2>/dev/null || echo "")
-      
-      note "Found interrupted refine at iteration $saved_iter/$saved_total"
-      start_iter=$((saved_iter))
-      iters=$saved_total
-      
-      # Find the latest completed iteration file
-      local latest_iter=$(find_latest_iter "$root")
-      if [[ "$latest_iter" -gt 0 ]]; then
-        plan_in="planning/PLAN_codex_iter${latest_iter}.md"
-        start_iter=$((latest_iter + 1))
-        note "Resuming from iteration $start_iter (found iter${latest_iter})"
-      fi
-    else
-      note "No interrupted refine found. Starting fresh."
-    fi
-  else
-    # Check if there is an incomplete refine
-    local state=$(load_refine_state "$root")
-    local saved_status=$(echo "$state" | grep -oP '(?<="status": ")[^"]*' 2>/dev/null || echo "")
-    if [[ "$saved_status" == "in_progress" ]]; then
-      local latest_iter=$(find_latest_iter "$root")
-      note "WARNING: Found interrupted refine at iter${latest_iter}"
-      note "Use --resume to continue, or proceed to start fresh"
-      read -p "Start fresh? [y/N] " -n 1 -r
-      echo
-      if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        note "Aborting. Use: flywheel refine --resume"
-        return 1
-      fi
-    fi
-  fi
-
-  [[ -f "$plan_in" ]] || die "Missing: $plan_in"
-
-  if [[ "$run_bg" == true ]]; then
-    local job_name="refine-$(basename "$root")-$(date +%H%M%S)"
-    local log_file="$root/planning/.refine-${job_name}.log"
-    note "Starting background job: $job_name"
-    note "Log: $log_file"
-    local resume_flag=""
-    [[ "$do_resume" == true ]] && resume_flag="--resume"
-    tmux new-session -d -s "$job_name" "cd '$root' && flywheel refine --iters $iters --plan '$plan_in' $resume_flag 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
-    note "Commands: flywheel jobs | flywheel logs $job_name | flywheel attach $job_name"
-    return 0
-  fi
-
-  mkdir -p planning
-  note "Codex refinement: model=$FW_GPT_PLAN_MODEL iters=$iters (starting at $start_iter)"
+  source "$HOME/.config/flywheel/config.env" 2>/dev/null || true
+  : "${FW_GPT_PLAN_MODEL:=gpt-5.2}" "${FW_CODEX_REASONING:=high}"
+  
+  mkdir -p planning .flywheel
   
   local prev="$plan_in"
   for i in $(seq "$start_iter" "$iters"); do
     local next="planning/PLAN_codex_iter${i}.md"
     
-    # Save state before each iteration
-    save_refine_state "$root" "$i" "$iters" "$prev"
+    # Save state
+    cat > "$root/.flywheel/refine-state.json" <<EOF
+{"current_iter": $i, "total_iters": $iters, "plan_in": "$prev", "timestamp": "$(date -Iseconds)", "status": "in_progress"}
+EOF
     
-    note "Iteration $i/$iters: $prev -> $next"
+    echo ""
+    echo "════════════════════════════════════════════════════════════"
+    echo "  ITERATION $i / $iters"
+    echo "  Input: $prev"
+    echo "  Output: $next"
+    echo "════════════════════════════════════════════════════════════"
+    echo ""
     
     if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
       --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
       --output-last-message "$next" \
       "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."; then
-      note "ERROR: Iteration $i failed. State saved. Resume with: flywheel refine --resume"
+      echo ""
+      echo "ERROR: Iteration $i failed!"
+      echo "State saved. Restart with: flywheel refine"
+      read -p "Press Enter to exit..."
       return 1
     fi
     
     prev="$next"
-    note "Checkpoint saved: $next"
+    echo ""
+    echo "✓ Iteration $i complete: $next ($(wc -c < "$next") bytes)"
   done
   
   cp "$prev" planning/PLAN.md
-  complete_refine_state "$root"
-  note "Done: planning/PLAN.md (from $iters iterations)"
+  
+  # Mark complete
+  cat > "$root/.flywheel/refine-state.json" <<EOF
+{"current_iter": $iters, "total_iters": $iters, "plan_in": "$prev", "timestamp": "$(date -Iseconds)", "status": "complete"}
+EOF
+  
+  echo ""
+  echo "════════════════════════════════════════════════════════════"
+  echo "  REFINEMENT COMPLETE"
+  echo "  Final plan: planning/PLAN.md ($(wc -c < planning/PLAN.md) bytes)"
+  echo "  Total iterations: $iters"
+  echo "════════════════════════════════════════════════════════════"
+  echo ""
+  echo "Next: flywheel beads"
+  echo ""
+  read -p "Press Enter to close this session..."
+}
+
+refine_plan() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+  local iters="$FW_PLAN_ITERS" plan_in="planning/PLAN_v0.md"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --iters) iters="$2"; shift 2;;
+      --plan) plan_in="$2"; shift 2;;
+      --_loop) shift; _refine_loop "$@"; return;;
+      *) die "Unknown: $1";;
+    esac
+  done
+  cd "$root"
+  
+  local session="refine-$(basename "$root")"
+  local start_iter=1
+  
+  # Check for existing session
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Refine session already running: $session"
+    note "Attaching... (Ctrl+B D to detach)"
+    sleep 1
+    tmux attach -t "$session"
+    return 0
+  fi
+  
+  # Check for interrupted refine
+  local state_file="$root/.flywheel/refine-state.json"
+  if [[ -f "$state_file" ]]; then
+    local status=$(grep -oP '(?<="status": ")[^"]*' "$state_file" 2>/dev/null || echo "")
+    if [[ "$status" == "in_progress" ]]; then
+      local latest_iter=$(find_latest_iter "$root")
+      if [[ "$latest_iter" -gt 0 ]]; then
+        note "Found interrupted refine at iteration $latest_iter"
+        plan_in="planning/PLAN_codex_iter${latest_iter}.md"
+        start_iter=$((latest_iter + 1))
+        local saved_total=$(grep -oP '(?<="total_iters": )[0-9]+' "$state_file" 2>/dev/null || echo "$iters")
+        [[ "$saved_total" -gt "$iters" ]] && iters="$saved_total"
+        note "Resuming from iteration $start_iter (target: $iters)"
+      fi
+    elif [[ "$status" == "complete" ]]; then
+      note "Previous refine completed. Starting fresh."
+      note "Use --plan to specify a different starting point"
+    fi
+  fi
+  
+  [[ -f "$plan_in" ]] || die "Missing: $plan_in"
+  
+  note "Starting refine session: $session"
+  note "Iterations: $start_iter to $iters"
+  note "Input: $plan_in"
+  echo ""
+  note "Detach anytime with: Ctrl+B D"
+  note "Reattach with: flywheel attach"
+  echo ""
+  sleep 2
+  
+  # Start tmux session with refine loop
+  tmux new-session -d -s "$session" \
+    "cd '$root' && flywheel refine --_loop '$root' $iters '$plan_in' $start_iter"
+  
+  # Attach to it
+  tmux attach -t "$session"
 }
 
 make_beads() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local plan="planning/PLAN.md" min_beads="50" run_bg=false
+  local plan="planning/PLAN.md" min_beads="50"
   while [[ $# -gt 0 ]]; do
     case "$1" in 
       --plan) plan="$2"; shift 2;; 
       --min-beads) min_beads="$2"; shift 2;; 
-      --bg|--background) run_bg=true; shift;;
       *) die "Unknown: $1";; 
     esac
   done
@@ -261,7 +246,17 @@ make_beads() {
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
 
-  local session; session="beads-$(basename "$root")"
+  local session="beads-$(basename "$root")"
+  
+  # Check for existing session
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Beads session already running: $session"
+    note "Attaching... (Ctrl+B D to detach)"
+    sleep 1
+    tmux attach -t "$session"
+    return 0
+  fi
+
   local prompt="You are a task decomposition expert. Read ${plan} and create Beads tasks.
 
 RULES:
@@ -278,33 +273,15 @@ COMMANDS:
 After creating all tasks, run: bv --robot-triage
 Then say BEADS_COMPLETE when done."
 
-  if [[ "$run_bg" == true ]]; then
-    local log_file="$root/planning/.beads-${session}.log"
-    note "Starting background beads job: $session"
-    note "Log: $log_file"
-    tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions --print '$prompt' 2>&1 | tee '$log_file'; echo '=== DONE ===' >> '$log_file'; sleep 10"
-    note "Commands: flywheel jobs | flywheel logs $session | flywheel attach $session"
-    return 0
-  fi
-
-  note "Spawning beads creation session: $session"
-  
-  if tmux has-session -t "$session" 2>/dev/null; then
-    note "Session $session already exists. Attaching..."
-    tmux attach -t "$session"
-    return 0
-  fi
+  note "Starting beads session: $session"
+  note "Detach anytime with: Ctrl+B D"
+  note "Reattach with: flywheel attach"
+  sleep 2
 
   tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions"
   sleep 3
   tmux send-keys -t "$session" "$prompt" Enter
-  
-  note "Beads creation started in session: $session"
-  read -p "Attach now? [Y/n] " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    tmux attach -t "$session"
-  fi
+  tmux attach -t "$session"
 }
 
 startwork() {
@@ -329,83 +306,80 @@ startwork() {
 
 show_status() {
   local root; root="$(git_root)" || die "Not in a git repo."
+  local name=$(basename "$root")
   cd "$root"
   
   echo "╔════════════════════════════════════════════════════════════════╗"
-  echo "║              FLYWHEEL STATUS: $(basename "$root")"
+  echo "║  FLYWHEEL STATUS: $name"
   echo "╚════════════════════════════════════════════════════════════════╝"
   echo ""
   
-  # Refine status
+  # Check for running refine session
+  if tmux has-session -t "refine-$name" 2>/dev/null; then
+    echo "🔄 REFINE SESSION RUNNING: refine-$name"
+    echo "   Attach: flywheel attach"
+    echo ""
+  fi
+  
+  # Refine state
   echo "=== REFINE STATUS ==="
   local state_file="$root/.flywheel/refine-state.json"
   if [[ -f "$state_file" ]]; then
     local status=$(grep -oP '(?<="status": ")[^"]*' "$state_file" 2>/dev/null || echo "unknown")
     local current=$(grep -oP '(?<="current_iter": )[0-9]+' "$state_file" 2>/dev/null || echo "?")
     local total=$(grep -oP '(?<="total_iters": )[0-9]+' "$state_file" 2>/dev/null || echo "?")
-    local ts=$(grep -oP '(?<="timestamp": ")[^"]*' "$state_file" 2>/dev/null || echo "?")
     echo "  Status: $status"
-    echo "  Progress: iteration $current / $total"
-    echo "  Last update: $ts"
+    echo "  Progress: $current / $total iterations"
   else
-    echo "  No refine state found"
+    echo "  No refine started"
   fi
   
-  # List iterations
+  # Iterations
   echo ""
-  echo "=== PLAN ITERATIONS ==="
-  ls -la planning/PLAN*.md 2>/dev/null | awk '{print "  " $NF " (" $5 " bytes, " $6 " " $7 " " $8 ")"}' || echo "  None"
-  
-  # Latest iteration
+  echo "=== PLAN FILES ==="
+  local iter_count=$(ls planning/PLAN_codex_iter*.md 2>/dev/null | wc -l)
+  echo "  Iterations: $iter_count"
   local latest=$(find_latest_iter "$root")
-  if [[ "$latest" -gt 0 ]]; then
-    echo ""
-    echo "  Latest: iter$latest"
-    echo "  Resume: flywheel refine --resume"
+  [[ "$latest" -gt 0 ]] && echo "  Latest: iter$latest ($(wc -c < "planning/PLAN_codex_iter${latest}.md") bytes)"
+  [[ -f planning/PLAN.md ]] && echo "  PLAN.md: $(wc -c < planning/PLAN.md) bytes"
+  
+  # Sessions
+  echo ""
+  echo "=== SESSIONS ==="
+  tmux ls 2>/dev/null | grep -E "(refine-|beads-)?$name" | sed 's/^/  /' || echo "  None"
+}
+
+attach_session() {
+  local root; root="$(git_root 2>/dev/null)" || root="."
+  local name=$(basename "$root")
+  local target="${1:-}"
+  
+  # If no target, try to find a relevant session
+  if [[ -z "$target" ]]; then
+    # Priority: refine > beads > project
+    if tmux has-session -t "refine-$name" 2>/dev/null; then
+      target="refine-$name"
+    elif tmux has-session -t "beads-$name" 2>/dev/null; then
+      target="beads-$name"
+    elif tmux has-session -t "$name" 2>/dev/null; then
+      target="$name"
+    else
+      die "No active session found. Run flywheel refine or flywheel startwork first."
+    fi
   fi
   
-  # Beads status
-  echo ""
-  echo "=== BEADS STATUS ==="
-  if [[ -d .beads ]]; then
-    local total=$(bv 2>/dev/null | grep -c "^" || echo "0")
-    local open=$(br list --status=open 2>/dev/null | grep -c "^" || echo "0")
-    echo "  Total tasks: $total"
-    echo "  Open tasks: $open"
-  else
-    echo "  Beads not initialized"
-  fi
-  
-  # Active sessions
-  echo ""
-  echo "=== ACTIVE SESSIONS ==="
-  tmux ls 2>/dev/null | grep -E "$(basename "$root")" || echo "  None"
+  note "Attaching to: $target (Ctrl+B D to detach)"
+  tmux attach -t "$target"
 }
 
 list_jobs() {
-  note "Background jobs:"
-  tmux list-sessions 2>/dev/null | grep -E "^(refine-|beads-)" || echo "  None"
+  echo "=== FLYWHEEL SESSIONS ==="
+  tmux list-sessions 2>/dev/null | grep -E "^(refine-|beads-)" | sed 's/^/  /' || echo "  None"
   echo ""
-  note "All sessions:"
-  tmux list-sessions 2>/dev/null || echo "  None"
-}
-
-view_logs() {
-  local job="${1:-}"
-  local root; root="$(git_root 2>/dev/null || echo .)"
-  if [[ -z "$job" ]]; then
-    local f; f=$(find "$root" -name ".refine-*.log" -o -name ".beads-*.log" 2>/dev/null | sort -t- -k3 -r | head -1)
-    [[ -n "$f" ]] && { note "Tailing: $f"; tail -f "$f"; } || die "No logs found"
-  else
-    local f; f=$(find "$root" -name "*${job}*.log" 2>/dev/null | head -1)
-    [[ -n "$f" ]] && { note "Tailing: $f"; tail -f "$f"; } || die "No log for: $job"
-  fi
-}
-
-attach_job() {
-  local job="${1:-}"
-  [[ -n "$job" ]] || die "Specify job. Use 'flywheel jobs'"
-  tmux has-session -t "$job" 2>/dev/null && tmux attach -t "$job" || die "No session: $job"
+  echo "=== ALL SESSIONS ==="
+  tmux list-sessions 2>/dev/null | sed 's/^/  /' || echo "  None"
+  echo ""
+  echo "Attach: flywheel attach <session-name>"
 }
 
 main() {
@@ -420,8 +394,7 @@ main() {
     startwork) startwork "$@";;
     status) show_status;;
     jobs) list_jobs;;
-    logs) view_logs "${1:-}";;
-    attach) attach_job "${1:-}";;
+    attach) attach_session "${1:-}";;
     ""|-h|--help|help) usage;;
     *) usage; die "Unknown: $cmd";;
   esac
