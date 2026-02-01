@@ -6,6 +6,46 @@ set -euo pipefail
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
 
+# Load prompt from external file
+load_prompt() {
+  local name="$1"
+  local prompt_file="$HOME/.config/flywheel/prompts/${name}.md"
+  if [[ -f "$prompt_file" ]]; then
+    cat "$prompt_file"
+  else
+    echo ""
+  fi
+}
+
+# Get system prompt (base rules for all agents)
+get_system_prompt() {
+  load_prompt "SYSTEM_PROMPT"
+}
+
+# Build agent prompt with system rules prepended
+build_agent_prompt() {
+  local agent_type="$1"
+  local base_prompt="$2"
+  local system_prompt worker_prompt full_prompt=""
+  
+  system_prompt=$(get_system_prompt)
+  worker_prompt=$(load_prompt "AGENT_WORKER")
+  
+  [[ -n "$system_prompt" ]] && full_prompt="$system_prompt
+
+---
+
+"
+  [[ -n "$worker_prompt" ]] && full_prompt="${full_prompt}${worker_prompt}
+
+---
+
+"
+  full_prompt="${full_prompt}${base_prompt}"
+  echo "$full_prompt"
+}
+
+
 load_config() {
   local repo_root="${1:-}"
   [[ -f "$HOME/.config/flywheel/config.env" ]] && source "$HOME/.config/flywheel/config.env"
@@ -301,7 +341,40 @@ startwork() {
   note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n"
   ntm spawn "$session" "${args[@]}"
   sleep 3
-  ntm send "$session" --no-cass-check --all "Swarm SOP: bv --robot-triage, claim bead, reserve files, implement, close bead, notify." || true
+  # Send prompts to each agent type
+  if [[ "$cc_n" -gt 0 ]]; then
+    local cc_prompt
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Integrator. START: bv --robot-next")
+    ntm send "$session" --no-cass-check --cc= "$cc_prompt" || true
+    for pane in $(seq 2 $((cc_n + 1))); do
+      sleep 0.3
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
+  fi
+  
+  if [[ "$cod_n" -gt 0 ]]; then
+    local cod_prompt
+    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: bv --robot-next")
+    ntm send "$session" --no-cass-check --cod= "$cod_prompt" || true
+    local cod_start=$((cc_n + 2))
+    local cod_end=$((cc_n + cod_n + 1))
+    for pane in $(seq "$cod_start" "$cod_end"); do
+      sleep 0.2
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
+  fi
+  
+  if [[ "$gmi_n" -gt 0 ]]; then
+    local gmi_prompt
+    gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer. START: bv --robot-next")
+    ntm send "$session" --no-cass-check --gmi= "$gmi_prompt" || true
+    local gmi_start=$((cc_n + cod_n + 2))
+    local gmi_end=$((cc_n + cod_n + gmi_n + 1))
+    for pane in $(seq "$gmi_start" "$gmi_end"); do
+      sleep 0.2
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+    done
+  fi
   note "Attach: ntm attach $session"
 }
 
@@ -384,6 +457,51 @@ list_jobs() {
   echo "Attach: flywheel attach <session-name>"
 }
 
+is_pane_idle() {
+  local session="$1" pane="$2"
+  local output
+  output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -10 2>/dev/null) || return 1
+  if echo "$output" | grep -qiE "(next steps|what.*should|shall i|want me to|waiting for|please confirm|let me know)" 2>/dev/null; then
+    return 0
+  fi
+  if echo "$output" | grep -qE "(Running|Executing|Writing|Reading|Searching)" 2>/dev/null; then
+    return 1
+  fi
+  return 1
+}
+
+nudge_agents() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+  local session; session="$(basename "$root")"
+  local force=false
+  [[ "${1:-}" == "--force" ]] && force=true
+  
+  note "Checking agents in session: $session"
+  local nudged=0 skipped=0
+  set +e
+  
+  for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
+    local pane_title
+    pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
+    
+    if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
+      note "  Nudging pane $pane ($pane_title)"
+      tmux send-keys -t "${session}:1.${pane}" "CONTINUE. Run bv --robot-next NOW." 2>/dev/null || true
+      sleep 0.2
+      tmux send-keys -t "${session}:1.${pane}" Enter 2>/dev/null || true
+      nudged=$((nudged + 1))
+    else
+      note "  Skipping pane $pane - working"
+      skipped=$((skipped + 1))
+    fi
+  done
+  
+  set -e
+  note "Nudged: $nudged | Skipped: $skipped"
+}
+
+
 main() {
   local cmd="${1:-}"; shift || true
   case "$cmd" in
@@ -398,6 +516,7 @@ main() {
     status) show_status;;
     jobs) list_jobs;;
     attach) attach_session "${1:-}";;
+    nudge) nudge_agents "$@";;
     ""|-h|--help|help) usage;;
     *) usage; die "Unknown: $cmd";;
   esac
@@ -417,25 +536,27 @@ compete_plans() {
   
   local context_file="planning/PLAN_v0.md"
   [[ -f "$context_file" ]] || context_file="planning/INTERVIEW_TRANSCRIPT.md"
-  [[ -f "$context_file" ]] || die "No context file. Run flywheel plan first."
+  [[ -f "$context_file" ]] || die "No context file. Run flywheel plan first or create planning/PLAN_v0.md"
   
   local session="compete-$(basename "$root")"
   
   if tmux has-session -t "$session" 2>/dev/null; then
-    note "Compete session running. Attaching..."
+    note "Compete session running. Attaching... (Ctrl+B D to detach)"
+    sleep 1
     tmux attach -t "$session"
     return 0
   fi
   
-  note "Starting competitive planning session: $session"
-  note "Context: $context_file"
+  note "Starting competitive planning: $session"
+  note "Context: $context_file ($(wc -c < "$context_file") bytes)"
   note ""
-  note "This will generate plans from Claude, Codex, and Gemini in parallel,"
-  note "then synthesize them with GPT-5.2 Pro."
+  note "Generates plans from Claude, Codex, Gemini in parallel,"
+  note "then synthesizes with GPT-5.2 Pro (xhigh reasoning)."
   note ""
+  note "Detach: Ctrl+B D | Reattach: flywheel attach"
   sleep 2
   
-  tmux new-session -d -s "$session" "cd '$root' && _compete_runner '$context_file'"
+  tmux new-session -d -s "$session" "cd '"$root"' && flywheel-compete '"$context_file"'"
   tmux attach -t "$session"
 }
 
