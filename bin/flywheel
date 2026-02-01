@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Flywheel-Lite with persistent tmux sessions
+# Flywheel-Lite with persistent tmux sessions + approval mode
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
