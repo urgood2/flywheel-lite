@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# Competitive Plan Generation
+# Uses: 2x Opus, 1x Codex (xhigh), 1x GPT-5.2 (xhigh)
+# Then synthesizes with GPT-5.2 Pro (xhigh)
+
+context_file="${1:-}"
+[[ -z "$context_file" ]] && { echo "Usage: flywheel-compete <plan-file>"; exit 1; }
+[[ -f "$context_file" ]] || { echo "ERROR: File not found: $context_file"; exit 1; }
+
+root=$(pwd)
+
+# Load config
+source "$HOME/.config/flywheel/config.env" 2>/dev/null || true
+
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║          COMPETITIVE PLAN GENERATION                          ║"
+echo "║   2x Opus + 1x Codex (xhigh) + 1x GPT-5.2 (xhigh)            ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+
+mkdir -p planning/competing
+
+# Create temp files for prompts
+prompt_file=$(mktemp)
+mvp_prompt_file=$(mktemp)
+context_excerpt=$(head -c 15000 "$context_file")
+
+# Write base prompt
+cat > "$prompt_file" << PROMPT_EOF
+OUTPUT INSTRUCTIONS: You must output ONLY the implementation plan as markdown text. Do NOT use any tools. Do NOT write any files. Do NOT perform any actions. Just write the plan text directly as your response.
+
+You are an expert software architect creating an implementation plan.
+
+REQUIREMENTS FOR THE PLAN:
+- Be specific: exact file paths, function names, data structures
+- Include clear phases with dependencies between tasks
+- Add detailed acceptance criteria for each task
+- Consider edge cases, error handling, and failure modes
+- Design for parallel execution by multiple coding agents
+- Include estimated complexity (S/M/L) for each task
+
+PROJECT CONTEXT:
+$context_excerpt
+
+---
+
+OUTPUT FORMAT: Write a detailed, actionable engineering plan in Markdown with:
+1. Executive Summary (TL;DR)
+2. Architecture Overview
+3. Phase breakdown with numbered tasks
+4. Critical path and dependencies
+5. Risk mitigation
+
+BEGIN YOUR PLAN NOW (markdown only, no tool use):
+PROMPT_EOF
+
+# Write MVP-focused prompt
+cat "$prompt_file" > "$mvp_prompt_file"
+echo "" >> "$mvp_prompt_file"
+echo "SPECIAL FOCUS: Prioritize testability and incremental delivery. Get a working MVP as fast as possible." >> "$mvp_prompt_file"
+
+echo "=== Phase 1: Generating 4 competing plans ==="
+echo "Context: $context_file ($(wc -c < "$context_file") bytes)"
+echo ""
+
+# Generate plans in parallel - use cat to pipe to commands
+echo "[1/4] Opus #1 generating plan..."
+cat "$prompt_file" | bash -lc "claude --dangerously-skip-permissions --model opus -p" > planning/competing/opus_1.md 2>&1 &
+pid1=$!
+
+echo "[2/4] Opus #2 generating plan (MVP focus)..."
+cat "$mvp_prompt_file" | bash -lc "claude --dangerously-skip-permissions --model opus -p" > planning/competing/opus_2.md 2>&1 &
+pid2=$!
+
+echo "[3/4] Codex (xhigh reasoning) generating plan..."
+cat "$prompt_file" | bash -lc "codex exec --model gpt-5.2-codex --config model_reasoning_effort="xhigh" \
+  --output-last-message planning/competing/codex_xhigh.md -" > /dev/null 2>&1 &
+pid3=$!
+
+echo "[4/4] GPT-5.2 (xhigh reasoning) generating plan..."
+cat "$prompt_file" | bash -lc "codex exec --model gpt-5.2 --config model_reasoning_effort="xhigh" \
+  --output-last-message planning/competing/gpt52_xhigh.md -" > /dev/null 2>&1 &
+pid4=$!
+
+echo ""
+echo "All 4 plan generations started:"
+echo "  Opus #1:       PID $pid1"
+echo "  Opus #2:       PID $pid2"  
+echo "  Codex xhigh:   PID $pid3"
+echo "  GPT-5.2 xhigh: PID $pid4"
+echo ""
+echo "Waiting for completion (5-15 minutes)..."
+echo ""
+
+# Wait with progress
+while kill -0 $pid1 2>/dev/null || kill -0 $pid2 2>/dev/null || kill -0 $pid3 2>/dev/null || kill -0 $pid4 2>/dev/null; do
+  sleep 15
+  sizes=""
+  for f in opus_1 opus_2 codex_xhigh gpt52_xhigh; do
+    if [[ -f "planning/competing/${f}.md" ]]; then
+      s=$(wc -c < "planning/competing/${f}.md" 2>/dev/null || echo 0)
+      sizes="$sizes ${f}:${s}"
+    fi
+  done
+  echo "  Progress:$sizes bytes"
+done
+echo ""
+
+# Cleanup temp files
+rm -f "$prompt_file" "$mvp_prompt_file"
+
+# Check results
+echo "=== Plan Generation Results ==="
+success_count=0
+for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+  path="planning/competing/$f"
+  if [[ -f "$path" ]] && [[ $(wc -c < "$path") -gt 1000 ]]; then
+    echo "  ✓ $f: $(wc -c < "$path") bytes"
+    success_count=$((success_count + 1))
+  else
+    echo "  ✗ $f: FAILED or too small ($(wc -c < "$path" 2>/dev/null || echo 0) bytes)"
+  fi
+done
+echo ""
+
+if [[ $success_count -lt 2 ]]; then
+  echo "ERROR: Only $success_count plans generated. Need at least 2 for synthesis."
+  echo "Check individual plan files for errors:"
+  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+    echo "  --- $f ---"
+    head -20 "planning/competing/$f" 2>/dev/null || echo "  (missing)"
+  done
+  read -p "Press Enter to exit..."
+  exit 1
+fi
+
+echo "=== Phase 2: Synthesizing with GPT-5.2 Pro (xhigh) ==="
+echo ""
+
+# Build synthesis prompt in a temp file
+synth_prompt_file=$(mktemp)
+cat > "$synth_prompt_file" << SYNTH_HEADER
+You are a principal software architect. You have received $success_count competing implementation plans for the same project.
+
+YOUR TASK: Create ONE MASTER PLAN that:
+1. Takes the BEST ideas from each plan
+2. Resolves contradictions by choosing the superior approach
+3. Fills gaps that individual plans missed
+4. Ensures consistent naming and structure
+5. Optimizes for parallel execution by 3-5 coding agents
+
+CRITICAL: Output ONLY the final synthesized plan in Markdown. No commentary, no comparisons - just the complete implementation plan.
+
+SYNTH_HEADER
+
+for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+  path="planning/competing/$f"
+  if [[ -f "$path" ]] && [[ $(wc -c < "$path") -gt 1000 ]]; then
+    name=$(echo "$f" | sed "s/.md//" | tr "_" " " | tr "[:lower:]" "[:upper:]")
+    echo "## $name PLAN:" >> "$synth_prompt_file"
+    cat "$path" >> "$synth_prompt_file"
+    echo "" >> "$synth_prompt_file"
+    echo "" >> "$synth_prompt_file"
+  fi
+done
+
+echo "---" >> "$synth_prompt_file"
+echo "" >> "$synth_prompt_file"
+echo "OUTPUT THE SYNTHESIZED MASTER PLAN NOW (markdown only):" >> "$synth_prompt_file"
+
+echo "Running GPT-5.2 synthesis (xhigh reasoning)..."
+echo "This may take 10-15 minutes for thorough analysis..."
+echo ""
+
+if cat "$synth_prompt_file" | bash -lc "codex exec --model gpt-5.2 \
+  --config model_reasoning_effort="xhigh" \
+  --output-last-message planning/PLAN_synthesized.md -"; then
+  
+  rm -f "$synth_prompt_file"
+  
+  # Backup original and set as new v0
+  [[ -f planning/PLAN_v0.md ]] && cp planning/PLAN_v0.md planning/PLAN_pre_compete.md
+  cp planning/PLAN_synthesized.md planning/PLAN_v0.md
+  
+  echo ""
+  echo "╔════════════════════════════════════════════════════════════════╗"
+  echo "║          SYNTHESIS COMPLETE                                   ║"
+  echo "╚════════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "Input plans:"
+  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+    [[ -f "planning/competing/$f" ]] && echo "  planning/competing/$f: $(wc -c < "planning/competing/$f") bytes"
+  done
+  echo ""
+  echo "Synthesized output:"
+  echo "  planning/PLAN_synthesized.md: $(wc -c < planning/PLAN_synthesized.md) bytes"
+  echo "  (Copied to planning/PLAN_v0.md)"
+  echo ""
+  echo "Next steps:"
+  echo "  flywheel refine    # Polish the synthesized plan"
+  echo "  flywheel beads     # Create tasks from plan"
+else
+  rm -f "$synth_prompt_file"
+  echo ""
+  echo "ERROR: Synthesis failed!"
+  echo "Individual plans saved in planning/competing/"
+fi
+
+echo ""
+echo "=== COMPETE WORKFLOW COMPLETE ==="
+read -p "Press Enter to close..."
