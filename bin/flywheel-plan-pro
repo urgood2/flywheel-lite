@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Force line-buffered output
+export STDBUF_O=L
+if [[ -z "${STDBUF_APPLIED:-}" ]] && command -v stdbuf &>/dev/null; then export STDBUF_APPLIED=1; exec stdbuf -oL bash "$0" "$@"; fi
 # flywheel-plan-pro: Guided planning with GPT Pro web integration
 # Interactive mode - choose to continue after each round
 set -euo pipefail
@@ -63,7 +66,7 @@ round=0
 # Interactive Refinement Loop
 # ============================================================================
 while true; do
-    ((round++))
+    ((++round))
     
     echo
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -82,8 +85,8 @@ while true; do
     elif command -v xclip &> /dev/null && [[ -n "${DISPLAY:-}" ]]; then
         cat "$CURRENT_PLAN" | xclip -selection clipboard 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
     else
-        echo -e "${YELLOW}📋 Copy the plan manually:${NC}"
-        echo -e "   cat $CURRENT_PLAN"
+        echo -e "${YELLOW}📋 Copy to local clipboard (Mac):${NC}"
+        echo -e "   vps "cat $CURRENT_PLAN" | pbcopy"
     fi
     echo
     

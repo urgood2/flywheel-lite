@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Flywheel Watchdog - nudges IDLE agents every N seconds
+
+set -euo pipefail
+
+SESSION="${1:-}"
+INTERVAL="${2:-60}"
+
+[[ -n "$SESSION" ]] || { echo "Usage: flywheel-watchdog <session> [interval]"; exit 1; }
+
+echo "Watchdog started: session=$SESSION interval=${INTERVAL}s"
+echo "Only nudges idle agents (skips working ones)"
+echo "Press Ctrl+C to stop"
+
+# Find the repo root from session name
+REPO_ROOT="/data/projects/$SESSION"
+[[ -d "$REPO_ROOT" ]] || REPO_ROOT="."
+
+while true; do
+    sleep "$INTERVAL"
+    
+    if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+        echo "Session $SESSION gone. Exiting."
+        exit 0
+    fi
+    
+    echo "$(date +%H:%M:%S) Checking for idle agents..."
+    cd "$REPO_ROOT" 2>/dev/null || true
+    flywheel nudge 2>&1 | grep -E "(Nudging|Skipping|Nudged)" || true
+done

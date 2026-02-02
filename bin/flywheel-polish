@@ -1,11 +1,12 @@
-#\!/usr/bin/env bash
+#!/usr/bin/env bash
 # flywheel-polish: Interactive bead refinement ("Measure N Times, Implement Once")
 # Based on Doodlestein methodology - manual review after each round
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-PLAN_FILE="${1:-planning/PLAN.md}"
+MAX_ROUNDS="${1:-9}"
+PLAN_FILE="${2:-planning/PLAN.md}"
 PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
@@ -27,7 +28,7 @@ echo -e "${BLUE}╚════════════════════�
 echo
 
 # Check prerequisites
-if [[ \! -f "$PLAN_FILE" ]]; then
+if [[ ! -f "$PLAN_FILE" ]]; then
     echo -e "${RED}Error: Plan file not found: $PLAN_FILE${NC}"
     echo "Usage: flywheel polish [plan-file]"
     echo "Default: planning/PLAN.md"
@@ -46,7 +47,7 @@ else
 fi
 
 # Check for claude
-if \! command -v claude &> /dev/null; then
+if ! command -v claude &> /dev/null; then
     echo -e "${RED}Error: claude CLI not found${NC}"
     exit 1
 fi
@@ -56,7 +57,7 @@ echo -e "${BOLD}🔧 Beads tool:${NC} $BEADS_CMD"
 echo
 
 # Count beads
-BEAD_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+BEAD_COUNT=$($BEADS_CMD list 2>/dev/null | wc -l || echo "0")
 echo -e "${YELLOW}Current bead count: $BEAD_COUNT${NC}"
 
 if [[ "$BEAD_COUNT" -lt 1 ]]; then
@@ -78,16 +79,16 @@ echo
 read -p "Press Enter to start first iteration..."
 
 # The main polish prompt
-POLISH_PROMPT="Reread AGENTS.md so it is still fresh in your mind. Then read ALL of $PLAN_FILE. Use ultrathink. Check over each bead super carefully-- are you sure it makes sense? Is it optimal? Could we change anything to make the system work better for users? If so, revise the beads. It is a lot easier and faster to operate in plan space before we start implementing these things\!
+POLISH_PROMPT="Reread AGENTS.md so it is still fresh in your mind. Then read ALL of $PLAN_FILE. Use ultrathink. Check over each bead super carefully-- are you sure it makes sense? Is it optimal? Could we change anything to make the system work better for users? If so, revise the beads. It is a lot easier and faster to operate in plan space before we start implementing these things!
 
-DO NOT OVERSIMPLIFY THINGS\! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY\!
+DO NOT OVERSIMPLIFY THINGS! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY!
 
 Also make sure that as part of the beads we include comprehensive unit tests and e2e test scripts with great, detailed logging so we can be sure that everything is working perfectly after implementation. It is critical that EVERYTHING from the markdown plan be embedded into the beads so that we never need to refer back to the markdown plan and we do not lose any important context or ideas or insights into the new features planned and why we are making them.
 
 Remember to ONLY use the $BEADS_CMD tool to create and modify the beads and add the dependencies."
 
 # Fresh context prompt (for new session after flatline)
-FRESH_CONTEXT_PROMPT="First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both\! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Use ultrathink."
+FRESH_CONTEXT_PROMPT="First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Use ultrathink."
 
 FRESH_FOLLOWUP_PROMPT="We recently transformed a markdown plan file into a bunch of new beads. I want you to very carefully review and analyze these using $BEADS_CMD and bv.
 
@@ -97,7 +98,7 @@ round=0
 session_num=1
 
 while true; do
-    ((round++))
+    ((++round))
     
     echo
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -106,7 +107,7 @@ while true; do
     echo
     
     # Show bead count before
-    BEFORE_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+    BEFORE_COUNT=$($BEADS_CMD list 2>/dev/null | wc -l || echo "0")
     echo -e "${YELLOW}Beads before: $BEFORE_COUNT${NC}"
     echo
     
@@ -114,13 +115,13 @@ while true; do
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
     
     # Run claude with the polish prompt
-    echo "$POLISH_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_round_${round}.log"
+    echo "$POLISH_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_round_${round}.log"
     
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
     echo
     
     # Show bead count after
-    AFTER_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+    AFTER_COUNT=$($BEADS_CMD list 2>/dev/null | wc -l || echo "0")
     echo -e "${YELLOW}Beads after: $AFTER_COUNT${NC}"
     
     if [[ "$AFTER_COUNT" -ne "$BEFORE_COUNT" ]]; then
@@ -156,16 +157,16 @@ while true; do
             echo
             
             # Run fresh context prompt
-            echo "$FRESH_CONTEXT_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_fresh_${session_num}.log"
+            echo "$FRESH_CONTEXT_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_fresh_${session_num}.log"
             
             echo
             echo -e "${BOLD}Step 2: Re-analyzing beads with fresh eyes...${NC}"
             echo
             
             # Run followup prompt
-            echo "$FRESH_FOLLOWUP_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee -a "/tmp/polish_fresh_${session_num}.log"
+            echo "$FRESH_FOLLOWUP_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee -a "/tmp/polish_fresh_${session_num}.log"
             
-            ((session_num++))
+            ((++session_num))
             echo -e "${GREEN}Fresh session complete. Now on session $session_num.${NC}"
             ;;
         X)
@@ -179,9 +180,9 @@ while true; do
                 echo -e "${BOLD}Running Codex with high reasoning effort...${NC}"
                 echo
                 # Note: codex CLI syntax may vary
-                echo "$POLISH_PROMPT" | codex --reasoning high 2>&1 | tee "/tmp/polish_codex_final.log" || {
+                echo "$POLISH_PROMPT" | codex exec --model gpt-5.2 --config model_reasoning_effort="high" - 2>&1 | tee "/tmp/polish_codex_final.log" || {
                     echo -e "${YELLOW}Codex command failed. Try manually:${NC}"
-                    echo "  codex --reasoning high"
+                    echo "  codex exec --model gpt-5.2 --config model_reasoning_effort="high" -"
                     echo "  Then paste the polish prompt"
                 }
             else
@@ -199,7 +200,7 @@ while true; do
             fi
             
             echo
-            echo -e "${GREEN}Codex final pass complete\!${NC}"
+            echo -e "${GREEN}Codex final pass complete!${NC}"
             break
             ;;
         D|*)
@@ -218,7 +219,7 @@ echo
 echo -e "${BOLD}Summary:${NC}"
 echo "  Iterations: $round"
 echo "  Sessions: $session_num"
-echo "  Final bead count: $($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "?")"
+echo "  Final bead count: $($BEADS_CMD list 2>/dev/null | wc -l || echo "?")"
 echo
 echo -e "${BOLD}Logs saved to:${NC}"
 ls -la /tmp/polish_*.log 2>/dev/null | tail -5

@@ -56,6 +56,11 @@ load_config() {
 }
 
 git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
+# Sanitize session name for tmux (only allow a-z, A-Z, 0-9, _, -)
+sanitize_session_name() {
+  echo "$1" | tr "@.:" "---" | sed "s/[^a-zA-Z0-9_-]/-/g"
+}
+
 require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing: $1"; }
 
 usage() {
@@ -71,7 +76,7 @@ Usage:
   flywheel refine --iters N                  # Fixed iterations mode (legacy)
   flywheel beads [--plan FILE] [--min-beads N]
   flywheel compete                              # Generate 4 competing plans + synthesize
-  flywheel startwork [--cc N] [--cod N] [--gmi N]
+  flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit]
   flywheel status                              # Show refine/beads progress
   flywheel attach [session]                    # Attach to refine/beads session
   flywheel plan-pro [--rounds N]        # GPT Pro guided planning (manual steps)
@@ -131,7 +136,7 @@ plan_session() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
   local rounds="${1:-$FW_INTERVIEW_ROUNDS}"
-  local session; session="$(basename "$root")"
+  local session; session="$(sanitize_session_name "$(basename "$root")")"
   cd "$root"
   note "Spawning planning session: $session"
   ntm spawn "$session" --cc=1
@@ -201,7 +206,7 @@ EOF
 Your task:
 1. Check for: specificity, testability, parallelizability, completeness, clarity
 2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
-3. If the plan needs improvement, output an IMPROVED version of the entire plan (markdown only, no commentary)
+3. If the plan needs improvement, output an IMPROVED version of the COMPLETE plan. CRITICAL: Preserve ALL sections, tasks, and details - do not omit or summarize anything. Only add clarity, fix issues, or expand where needed. (markdown only, no commentary)
 
 Be strict. Only approve if the plan is truly implementation-ready."; then
         echo ""
@@ -226,7 +231,7 @@ Be strict. Only approve if the plan is truly implementation-ready."; then
       if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
         --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
         --output-last-message "$next" \
-        "Read ${prev}. Rewrite into a better engineering plan with specificity, testability, parallelizability. Markdown only."; then
+        "Read ${prev}. Rewrite into an improved engineering plan with better specificity, testability, and parallelizability. CRITICAL: Preserve ALL sections, tasks, and details from the original - do not omit or summarize anything. Only add clarity, fix issues, or expand where needed. Markdown only."; then
         echo ""
         echo "ERROR: Iteration $i failed!"
         echo "State saved. Restart with: flywheel refine"
@@ -281,7 +286,7 @@ refine_plan() {
   done
   cd "$root"
   
-  local session="refine-$(basename "$root")"
+  local session="refine-$(sanitize_session_name "$(basename "$root")")"
   local start_iter=1
   
   if tmux has-session -t "$session" 2>/dev/null; then
@@ -347,7 +352,7 @@ make_beads() {
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
 
-  local session="beads-$(basename "$root")"
+  local session="beads-$(sanitize_session_name "$(basename "$root")")"
   
   # Check for existing session
   if tmux has-session -t "$session" 2>/dev/null; then
@@ -384,36 +389,63 @@ Then say BEADS_COMPLETE."
   tmux attach -t "$session"
 }
 
+# New startwork function with commit agent support
 startwork() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local session; session="$(basename "$root")"
+  local session; session="$(sanitize_session_name "$(basename "$root")")"
   local cc_n="$FW_CC" cod_n="$FW_COD" gmi_n="$FW_GMI"
+  local commit_agent=false
   while [[ $# -gt 0 ]]; do
-    case "$1" in --cc) cc_n="$2"; shift 2;; --cod) cod_n="$2"; shift 2;; --gmi) gmi_n="$2"; shift 2;; *) die "Unknown: $1";; esac
+    case "$1" in 
+      --cc) cc_n="$2"; shift 2;; 
+      --cod) cod_n="$2"; shift 2;; 
+      --gmi) gmi_n="$2"; shift 2;; 
+      --commit) commit_agent=true; shift;;
+      *) die "Unknown: $1";; 
+    esac
   done
   cd "$root"
+  
+  # Calculate total agents (add 1 if commit agent enabled)
+  local total_cc="$cc_n"
+  [[ "$commit_agent" == true ]] && total_cc=$((cc_n + 1))
+  
   local args=()
-  [[ "$cc_n" -gt 0 ]] && args+=(--cc="$cc_n")
+  [[ "$total_cc" -gt 0 ]] && args+=(--cc="$total_cc")
   [[ "$cod_n" -gt 0 ]] && args+=(--cod="$cod_n")
   [[ "$gmi_n" -gt 0 ]] && args+=(--gmi="$gmi_n")
-  note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n"
+  
+  note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n commit=$commit_agent"
   ntm spawn "$session" "${args[@]}"
   sleep 3
   
-  # Pane layout: 1=shell, 2..(cc_n+1)=Claude, (cc_n+2)..(cc_n+cod_n+1)=Codex, etc.
+  # Pane layout: 1=shell, 2..(cc_n+1)=Claude workers, then commit agent if enabled
   local pane=2
   
-  # Send prompts to Claude agents (panes 2 to cc_n+1)
+  # Send prompts to Claude worker agents (panes 2 to cc_n+1)
   if [[ "$cc_n" -gt 0 ]]; then
     local cc_prompt
-    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Integrator. START: bv --robot-next")
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: bv --robot-next")
     for i in $(seq 1 "$cc_n"); do
-      note "Sending prompt to Claude pane $pane"
+      note "Sending prompt to Claude Worker pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cc_prompt" Enter
       sleep 0.5
       pane=$((pane + 1))
     done
+  fi
+  
+  # Send prompt to Commit Agent (dedicated Claude pane)
+  if [[ "$commit_agent" == true ]]; then
+    local commit_prompt
+    commit_prompt=$(load_prompt "COMMIT_AGENT")
+    if [[ -n "$commit_prompt" ]]; then
+      note "Sending prompt to Commit Agent pane $pane"
+      tmux send-keys -t "${session}:1.${pane}" "$commit_prompt" Enter
+      pane=$((pane + 1))
+    else
+      note "Warning: COMMIT_AGENT.md prompt not found"
+    fi
   fi
   
   # Send prompts to Codex agents (needs delay between text and Enter)
@@ -443,9 +475,12 @@ startwork() {
       pane=$((pane + 1))
     done
   fi
+  
+  if [[ "$commit_agent" == true ]]; then
+    note "Commit Agent running in dedicated pane (15-min cycles)"
+  fi
   note "Attach: ntm attach $session"
 }
-
 show_status() {
   local root; root="$(git_root)" || die "Not in a git repo."
   local name=$(basename "$root")
@@ -563,7 +598,7 @@ is_pane_idle() {
 nudge_agents() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local session; session="$(basename "$root")"
+  local session; session="$(sanitize_session_name "$(basename "$root")")"
   local force=false
   [[ "${1:-}" == "--force" ]] && force=true
   
@@ -634,7 +669,8 @@ compete_plans() {
   [[ -f "$context_file" ]] || context_file="planning/INTERVIEW_TRANSCRIPT.md"
   [[ -f "$context_file" ]] || die "No context file. Run flywheel plan first or create planning/PLAN_v0.md"
   
-  local session="compete-$(basename "$root")"
+  local branch; branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+  local session="compete-$(sanitize_session_name "$(basename "$root")-$branch")"
   
   if tmux has-session -t "$session" 2>/dev/null; then
     note "Compete session running. Attaching... (Ctrl+B D to detach)"
