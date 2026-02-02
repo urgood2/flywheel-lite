@@ -20,7 +20,7 @@ OPTIONS:
   --no-sync       Don't add to ru sync
   --no-flywheel   Don't initialize flywheel/beads
   --org <name>    GitHub organization (default: urgood2)
-  --path <dir>    Local path (default: ~/repos/<repo-name>)
+  --path <dir>    Local path (default: /data/projects/<repo-name>)
   -h, --help      Show this help
 
 EXAMPLES:
@@ -67,7 +67,7 @@ done
 [[ -z "$REPO_NAME" ]] && { show_help; exit 1; }
 
 # Set default path if not specified
-[[ -z "$REPO_PATH" ]] && REPO_PATH="$HOME/repos/$REPO_NAME"
+[[ -z "$REPO_PATH" ]] && REPO_PATH="/data/projects/$REPO_NAME"
 
 FULL_NAME="$ORG/$REPO_NAME"
 
