@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# new-repo - Create a new repository, push to GitHub, and add to ru sync
-# Usage: new-repo <repo-name> [--public] [--no-sync]
+# new-repo - Create a new repository, push to GitHub, add to ru sync, and initialize flywheel
+# Usage: new-repo <repo-name> [--public] [--no-sync] [--no-flywheel]
 
 die() { echo "❌ ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
@@ -16,16 +16,17 @@ USAGE:
   new-repo <repo-name> [options]
 
 OPTIONS:
-  --public      Create as public repository (default: private)
-  --no-sync     Don't add to ru sync
-  --org <name>  GitHub organization (default: urgood2)
-  --path <dir>  Local path (default: ~/repos/<repo-name>)
-  -h, --help    Show this help
+  --public        Create as public repository (default: private)
+  --no-sync       Don't add to ru sync
+  --no-flywheel   Don't initialize flywheel/beads
+  --org <name>    GitHub organization (default: urgood2)
+  --path <dir>    Local path (default: ~/repos/<repo-name>)
+  -h, --help      Show this help
 
 EXAMPLES:
-  new-repo my-project                    # Private repo in ~/repos/my-project
+  new-repo my-project                    # Private repo, full setup
   new-repo my-tool --public              # Public repo
-  new-repo work-proj --org mycompany     # In organization
+  new-repo quick-test --no-flywheel      # Skip flywheel init
   new-repo api --path /data/projects/api # Custom path
 
 WHAT IT DOES:
@@ -34,12 +35,15 @@ WHAT IT DOES:
   3. Creates GitHub repo (private by default)
   4. Pushes initial commit
   5. Adds to ru sync (unless --no-sync)
+  6. Runs flywheel init + bd doctor --fix (unless --no-flywheel)
+  7. Commits and pushes setup files
 EOF
 }
 
 # Defaults
 VISIBILITY="--private"
 ADD_TO_SYNC=true
+INIT_FLYWHEEL=true
 ORG="urgood2"
 REPO_PATH=""
 
@@ -49,6 +53,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --public) VISIBILITY="--public"; shift ;;
     --no-sync) ADD_TO_SYNC=false; shift ;;
+    --no-flywheel) INIT_FLYWHEEL=false; shift ;;
     --org) ORG="$2"; shift 2 ;;
     --path) REPO_PATH="$2"; shift 2 ;;
     -h|--help) show_help; exit 0 ;;
@@ -100,6 +105,29 @@ if $ADD_TO_SYNC; then
   fi
 fi
 
+# Step 5: Initialize flywheel and fix issues
+if $INIT_FLYWHEEL; then
+  note "Initializing flywheel..."
+  
+  # Run flywheel init (auto-answer N to "Contributing to someone else's repo?")
+  echo "N" | flywheel init 2>/dev/null || true
+  success "Flywheel initialized"
+  
+  # Run bd doctor --fix to auto-fix issues
+  note "Running bd doctor --fix..."
+  bd doctor --fix --yes 2>/dev/null || bd doctor --fix 2>/dev/null || true
+  success "Beads doctor completed"
+  
+  # Commit setup files
+  if [[ -n "$(git status --porcelain)" ]]; then
+    note "Committing setup files..."
+    git add -A
+    git commit -q -m "chore: initialize flywheel and beads"
+    git push -q
+    success "Setup files committed and pushed"
+  fi
+fi
+
 echo ""
 echo "╭────────────────────────────────────────────────╮"
 echo "│ ✓ Repository created successfully!             │"
@@ -107,4 +135,8 @@ echo "├───────────────────────�
 printf "│ %-46s │\n" "Name: $FULL_NAME"
 printf "│ %-46s │\n" "Path: $REPO_PATH"
 printf "│ %-46s │\n" "URL:  https://github.com/$FULL_NAME"
+echo "├────────────────────────────────────────────────┤"
+echo "│ Next steps:                                    │"
+echo "│   cd $REPO_PATH"
+echo "│   flywheel plan                                │"
 echo "╰────────────────────────────────────────────────╯"
