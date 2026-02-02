@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# flywheel-plan-pro: Guided planning with GPT Pro web integration
+set -euo pipefail
+
+PROJECT_DIR="$(pwd)"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
+PLANNING_DIR="$PROJECT_DIR/planning"
+ROUNDS=${1:-3}
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# Create planning directory
+mkdir -p "$PLANNING_DIR"
+
+clear
+echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║  FLYWHEEL PLAN-PRO${BLUE} - Guided Planning with GPT Pro Integration   ║${NC}"
+echo -e "${BLUE}║  Project: $PROJECT_NAME                                           ${NC}"
+echo -e "${BLUE}║  Rounds: $ROUNDS (GPT Pro → Claude Code iterations)               ${NC}"
+echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+echo
+
+# ============================================================================
+# STEP 1: Initial Plan
+# ============================================================================
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${CYAN}  STEP 1: Initial Plan Creation${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo
+
+if [[ -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
+    echo -e "${GREEN}✓ Found existing plan: $PLANNING_DIR/PLAN_v0.md${NC}"
+    echo -e "  Lines: $(wc -l < "$PLANNING_DIR/PLAN_v0.md")"
+else
+    echo -e "${YELLOW}No initial plan found.${NC}"
+    echo
+    echo "Options:"
+    echo "  1) Run 'flywheel plan' first for interactive interview"
+    echo "  2) Run 'flywheel compete' for multi-model plan generation"
+    echo "  3) Create $PLANNING_DIR/PLAN_v0.md manually"
+    echo
+    read -p "Press Enter after creating initial plan, or Ctrl+C to exit..."
+    
+    if [[ ! -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
+        echo -e "${RED}Error: Still no plan found. Exiting.${NC}"
+        exit 1
+    fi
+fi
+
+CURRENT_PLAN="$PLANNING_DIR/PLAN_v0.md"
+echo
+
+# ============================================================================
+# STEP 2-N: GPT Pro Refinement Rounds
+# ============================================================================
+for round in $(seq 1 $ROUNDS); do
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  ROUND $round/$ROUNDS: GPT Pro Review${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo
+    
+    # Show plan location
+    echo -e "${BOLD}📄 Current Plan:${NC} $CURRENT_PLAN"
+    echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
+    echo
+    
+    # Copy plan to clipboard if possible
+    if command -v xclip &> /dev/null; then
+        cat "$CURRENT_PLAN" | xclip -selection clipboard
+        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
+    elif command -v pbcopy &> /dev/null; then
+        cat "$CURRENT_PLAN" | pbcopy
+        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
+    else
+        echo -e "${YELLOW}⚠ Clipboard not available. Copy manually:${NC}"
+        echo -e "   cat $CURRENT_PLAN | head -100"
+    fi
+    echo
+    
+    # Show the prompt to use
+    echo -e "${BOLD}📋 COPY THIS PROMPT TO GPT 5.2 PRO (Extended Reasoning):${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    cat << 'PROMPT'
+Carefully review this entire plan for me and come up with your best revisions 
+in terms of better architecture, new features, changed features, etc. to make 
+it better, more robust/reliable, more performant, more compelling/useful, etc. 
+For each proposed change, give me your detailed analysis and rationale/justification 
+for why it would make the project better along with the git-diff style change 
+versus the original plan shown below:
+PROMPT
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    echo
+    echo -e "${BOLD}Then paste your plan content after the prompt.${NC}"
+    echo
+    
+    # Wait for user to complete GPT Pro review
+    echo -e "${CYAN}🌐 Open: https://chat.openai.com (GPT Pro with Extended Reasoning)${NC}"
+    echo
+    read -p "Press Enter when GPT Pro has finished reviewing..."
+    echo
+    
+    # Get GPT output
+    echo -e "${BOLD}📥 Paste GPT Pro's response below (end with Ctrl+D on empty line):${NC}"
+    GPT_OUTPUT_FILE="$PLANNING_DIR/gpt_round${round}.md"
+    cat > "$GPT_OUTPUT_FILE"
+    echo
+    echo -e "${GREEN}✓ Saved GPT output to: $GPT_OUTPUT_FILE${NC}"
+    echo -e "   Lines: $(wc -l < "$GPT_OUTPUT_FILE")"
+    echo
+    
+    # Now integrate with Claude Code
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  ROUND $round/$ROUNDS: Claude Code Integration${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo
+    
+    NEW_PLAN="$PLANNING_DIR/PLAN_v$round.md"
+    
+    # Create the integration prompt
+    INTEGRATE_PROMPT="OK, now integrate these revisions to the markdown plan in-place; use ultrathink and be meticulous. Update $CURRENT_PLAN with the integrated changes and save as $NEW_PLAN. At the end, tell me which changes you wholeheartedly agree with, which you somewhat agree with, and which you disagree with.
+
+GPT Pro's revisions:
+
+$(cat "$GPT_OUTPUT_FILE")"
+
+    echo -e "${BOLD}Running Claude Code to integrate revisions...${NC}"
+    echo
+    
+    # Run Claude Code
+    echo "$INTEGRATE_PROMPT" | claude --dangerously-skip-permissions -p - 2>&1 | tee "$PLANNING_DIR/integration_round${round}.log"
+    
+    # Check if new plan was created
+    if [[ -f "$NEW_PLAN" ]]; then
+        echo
+        echo -e "${GREEN}✓ Created: $NEW_PLAN${NC}"
+        echo -e "   Lines: $(wc -l < "$NEW_PLAN")"
+        CURRENT_PLAN="$NEW_PLAN"
+    else
+        echo -e "${YELLOW}⚠ New plan not created. Using previous version.${NC}"
+    fi
+    echo
+    
+    # Show diff if possible
+    if [[ $round -gt 1 ]]; then
+        PREV_PLAN="$PLANNING_DIR/PLAN_v$((round-1)).md"
+        if [[ -f "$PREV_PLAN" ]] && [[ -f "$NEW_PLAN" ]]; then
+            echo -e "${BOLD}Changes from v$((round-1)) to v$round:${NC}"
+            diff --stat "$PREV_PLAN" "$NEW_PLAN" 2>/dev/null || true
+        fi
+    fi
+    echo
+done
+
+# ============================================================================
+# FINAL: Summary and Next Steps
+# ============================================================================
+echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  PLAN REFINEMENT COMPLETE${GREEN}                                        ║${NC}"
+echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+echo
+echo -e "${BOLD}📄 Plan Versions:${NC}"
+ls -la "$PLANNING_DIR"/PLAN_v*.md 2>/dev/null | while read line; do
+    echo "   $line"
+done
+echo
+echo -e "${BOLD}📄 Final Plan:${NC} $CURRENT_PLAN"
+echo -e "   Lines: $(wc -l < "$CURRENT_PLAN")"
+echo
+
+# Copy final plan to PLAN.md
+cp "$CURRENT_PLAN" "$PLANNING_DIR/PLAN.md"
+echo -e "${GREEN}✓ Copied to: $PLANNING_DIR/PLAN.md${NC}"
+echo
+
+echo -e "${BOLD}Next Steps:${NC}"
+echo "  1. flywheel beads --min-beads 50    # Convert plan to beads"
+echo "  2. flywheel polish --max 9          # Polish beads (6-9 iterations)"
+echo "  3. flywheel startwork --cc 2        # Start agent swarm"
+echo

@@ -312,3 +312,88 @@ flywheel attach <job>   # Attach
 ---
 
 *Location: /data/projects/FLYWHEEL_CHEATSHEET.md*
+
+---
+
+## DOODLESTEIN WORKFLOW (GPT Pro Integration)
+
+### The Philosophy
+> "Planning tokens are far fewer and cheaper than implementation tokens."
+> Spend 85%+ of time on planning. The code will write itself.
+
+### Full Doodlestein Workflow
+
+```bash
+# 1. Setup
+cd /data/projects/my-feature
+flywheel init
+
+# 2. Initial plan (interview or compete)
+flywheel plan --rounds 2           # OR
+flywheel compete                   # Multi-model generation
+
+# 3. GPT Pro guided refinement (2-3 rounds)
+flywheel plan-pro --rounds 3       # Interactive: prompts for GPT Pro web
+
+# 4. Create beads
+flywheel beads --min-beads 50
+
+# 5. Polish beads ("Measure N times, implement once")
+flywheel polish --max 9            # Run 6-9 iterations until steady state
+
+# 6. Start agents
+flywheel startwork --cc 2
+ntm attach my-feature
+```
+
+### New Commands (Doodlestein Integration)
+
+| Command | Description |
+|---------|-------------|
+| `flywheel plan-pro [--rounds N]` | Guided planning with GPT Pro web (manual steps) |
+| `flywheel polish [--max N]` | Iterative bead refinement (default: 9 rounds) |
+
+### GPT Pro Web Workflow (Manual Steps)
+
+The `plan-pro` command guides you through:
+
+1. **Copy plan** → Clipboard or show path
+2. **Show prompt** → Copy to GPT 5.2 Pro (Extended Reasoning)
+3. **Wait for GPT** → Press Enter when done
+4. **Paste output** → Save to `planning/gpt_roundN.md`
+5. **Claude integrates** → Creates `planning/PLAN_vN.md`
+6. **Repeat** → For N rounds
+
+### Key Prompts (Word-for-Word)
+
+See: `/data/projects/flywheel-lite/prompts/DOODLESTEIN_PROMPTS.md`
+
+| Phase | Prompt |
+|-------|--------|
+| GPT Plan Review | "Carefully review this entire plan..." |
+| Multi-Model Synthesis | "I asked 3 competing LLMs..." |
+| Plan → Beads | "OK so now read ALL of [PLAN]..." |
+| Bead Polish | "Reread AGENTS dot md..." |
+
+### When to Use What
+
+| Situation | Command |
+|-----------|---------|
+| New project, need interview | `flywheel plan` |
+| Want multi-model plans | `flywheel compete` |
+| Want GPT Pro deep review | `flywheel plan-pro` |
+| Ready to make beads | `flywheel beads` |
+| Want to polish beads | `flywheel polish` |
+| Ready to implement | `flywheel startwork` |
+
+### Model Recommendations (Doodlestein)
+
+| Task | Best Model | Why |
+|------|------------|-----|
+| Plan creation | Claude Code (Opus) | Code access needed |
+| Plan review | GPT 5.2 Pro Extended | Deep reasoning, no code needed |
+| Plan integration | Claude Code (Opus) | Needs to write to files |
+| Multi-model synthesis | GPT 5.2 Pro Extended | Final arbiter |
+| Plan → Beads | Claude Code (Opus) | Needs bd/br tools |
+| Bead polish | Claude Code (Opus) | Needs bd/br tools |
+| Final polish | Codex (high reasoning) | Fresh perspective |
