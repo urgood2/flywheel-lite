@@ -3,348 +3,341 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🎮 Agent Flywheel Cheat Sheet</title>
+    <title>Agent Flywheel Cheat Sheet</title>
     <style>
         :root {
-            --bg-primary: #0d1117;
-            --bg-secondary: #161b22;
-            --bg-tertiary: #21262d;
-            --text-primary: #e6edf3;
-            --text-secondary: #8b949e;
-            --accent-blue: #58a6ff;
-            --accent-green: #3fb950;
-            --accent-purple: #a371f7;
-            --accent-orange: #d29922;
-            --accent-red: #f85149;
-            --accent-pink: #db61a2;
-            --accent-cyan: #39c5cf;
-            --border-color: #30363d;
-            --code-bg: #1a1f26;
+            --bg: #1a1a2e;
+            --card: #16213e;
+            --accent: #0f3460;
+            --highlight: #e94560;
+            --text: #eee;
+            --muted: #888;
+            --code-bg: #0d1117;
+            --success: #3fb950;
+            --warning: #d29922;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+            background: var(--bg);
+            color: var(--text);
             line-height: 1.6;
             padding: 2rem;
-            max-width: 1400px;
-            margin: 0 auto;
         }
-        h1 {
-            font-size: 2.5rem;
-            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            margin-bottom: 0.5rem;
-            text-align: center;
+        h1 { color: var(--highlight); margin-bottom: 0.5rem; font-size: 2rem; }
+        h2 { color: var(--highlight); margin: 2rem 0 1rem; border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; }
+        h3 { color: var(--success); margin: 1.5rem 0 0.5rem; }
+        .subtitle { color: var(--muted); margin-bottom: 2rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; }
+        .card {
+            background: var(--card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            border-left: 4px solid var(--highlight);
         }
-        .subtitle { text-align: center; color: var(--text-secondary); margin-bottom: 2rem; font-size: 1.1rem; }
-        .verified { background: rgba(63,185,80,0.2); color: var(--accent-green); padding: 0.5rem 1rem; border-radius: 8px; text-align: center; margin-bottom: 2rem; font-size: 0.9rem; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 1.5rem; }
-        .card { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; }
-        .card h2 { font-size: 1.3rem; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
-        .card h2 .icon { font-size: 1.5rem; }
-        .card.blue h2 { color: var(--accent-blue); }
-        .card.green h2 { color: var(--accent-green); }
-        .card.purple h2 { color: var(--accent-purple); }
-        .card.orange h2 { color: var(--accent-orange); }
-        .card.pink h2 { color: var(--accent-pink); }
-        .card.red h2 { color: var(--accent-red); }
-        .card.cyan h2 { color: var(--accent-cyan); }
-        h3 { font-size: 0.9rem; color: var(--text-secondary); margin: 1rem 0 0.5rem 0; text-transform: uppercase; letter-spacing: 0.05em; }
-        pre { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; overflow-x: auto; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.85rem; margin: 0.5rem 0; }
-        code { font-family: "SF Mono", "Fira Code", monospace; background: var(--code-bg); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem; }
-        .cmd { color: var(--accent-green); }
-        .arg { color: var(--accent-blue); }
-        .flag { color: var(--accent-orange); }
-        .str { color: var(--accent-pink); }
-        .cmt { color: var(--text-secondary); }
-        table { width: 100%; border-collapse: collapse; margin: 0.5rem 0; font-size: 0.9rem; }
-        th, td { padding: 0.6rem; text-align: left; border-bottom: 1px solid var(--border-color); }
-        th { color: var(--text-secondary); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
-        .tag { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-        .tag.blue { background: rgba(88,166,255,0.2); color: var(--accent-blue); }
-        .tag.green { background: rgba(63,185,80,0.2); color: var(--accent-green); }
-        .tag.purple { background: rgba(163,113,247,0.2); color: var(--accent-purple); }
-        .tag.orange { background: rgba(210,153,34,0.2); color: var(--accent-orange); }
-        .tag.cyan { background: rgba(57,197,207,0.2); color: var(--accent-cyan); }
-        kbd { background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px; padding: 0.2rem 0.5rem; font-family: inherit; font-size: 0.8rem; }
-        .full-width { grid-column: 1 / -1; }
-        .quick-ref { background: linear-gradient(135deg, rgba(88,166,255,0.1), rgba(163,113,247,0.1)); border: 1px solid var(--accent-blue); }
-        .flywheel-ref { background: linear-gradient(135deg, rgba(57,197,207,0.1), rgba(63,185,80,0.1)); border: 1px solid var(--accent-cyan); }
-        .workflow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
-        .step { display: flex; align-items: flex-start; gap: 0.75rem; }
-        .step-num { background: var(--accent-purple); color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; flex-shrink: 0; }
-        .step-num.cyan { background: var(--accent-cyan); }
-        .step-num.green { background: var(--accent-green); }
-        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } body { padding: 1rem; } }
+        .card h3 { margin-top: 0; }
+        pre, code {
+            background: var(--code-bg);
+            border-radius: 4px;
+            font-family: "Fira Code", "SF Mono", monospace;
+            font-size: 0.9rem;
+        }
+        pre { padding: 1rem; overflow-x: auto; margin: 0.5rem 0; }
+        code { padding: 0.2rem 0.4rem; }
+        table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+        th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--accent); }
+        th { background: var(--accent); color: var(--highlight); }
+        tr:hover { background: var(--accent); }
+        .tag {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-right: 0.5rem;
+        }
+        .tag-cli { background: var(--success); color: #000; }
+        .tag-web { background: var(--warning); color: #000; }
+        .tag-interactive { background: var(--highlight); color: #fff; }
+        .philosophy {
+            background: linear-gradient(135deg, var(--accent), var(--card));
+            padding: 1.5rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            border-left: 4px solid var(--success);
+        }
+        .philosophy blockquote {
+            font-style: italic;
+            color: var(--success);
+            font-size: 1.1rem;
+        }
+        .prompt-box {
+            background: var(--code-bg);
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+            font-size: 0.85rem;
+        }
+        .flow-diagram {
+            background: var(--card);
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            white-space: pre;
+            overflow-x: auto;
+        }
+        .choice-box {
+            display: inline-block;
+            padding: 0.3rem 0.6rem;
+            margin: 0.2rem;
+            border-radius: 4px;
+            background: var(--accent);
+            border: 1px solid var(--highlight);
+        }
     </style>
 </head>
 <body>
-    <h1>🎮 Agent Flywheel Cheat Sheet</h1>
-    <p class="subtitle">Flywheel-Lite Workflow • Background Execution • Multi-Project Support</p>
-    <div class="verified">✅ All commands verified • Updated Feb 2026</div>
-    
-    <div class="grid">
-        <!-- FLYWHEEL-LITE WORKFLOW -->
-        <div class="card flywheel-ref full-width cyan">
-            <h2><span class="icon">🌀</span> Flywheel-Lite Workflow</h2>
-            <div class="workflow-grid">
-                <div class="step"><span class="step-num cyan">1</span><div><code>flywheel doctor</code><br><span class="cmt">Verify setup</span></div></div>
-                <div class="step"><span class="step-num cyan">2</span><div><code>cd /data/projects/myrepo</code></div></div>
-                <div class="step"><span class="step-num cyan">3</span><div><code>flywheel init</code><br><span class="cmt">Bootstrap</span></div></div>
-                <div class="step"><span class="step-num cyan">4</span><div><code>flywheel plan --rounds 2</code><br><span class="cmt">Interview</span></div></div>
-                <div class="step"><span class="step-num cyan">5</span><div><code>flywheel refine --max 5 --bg</code><br><span class="cmt">Background refine</span></div></div>
-                <div class="step"><span class="step-num cyan">6</span><div><code>flywheel beads</code><br><span class="cmt">Plan → Tasks</span></div></div>
-                <div class="step"><span class="step-num cyan">7</span><div><code>fwsw --cc 3</code><br><span class="cmt">Spawn swarm</span></div></div>
-                <div class="step"><span class="step-num cyan">8</span><div><code>ntm attach myrepo</code><br><span class="cmt">Work</span></div></div>
-            </div>
-        </div>
 
-        <!-- MULTI-PROJECT WORKFLOW -->
-        <div class="card quick-ref full-width blue">
-            <h2><span class="icon">🔀</span> Multi-Project Workflow</h2>
-            <div class="workflow-grid">
-                <div class="step"><span class="step-num green">1</span><div><strong>Project A</strong><br><code>cd /data/projects/proj-a && fwsw --cc 2</code></div></div>
-                <div class="step"><span class="step-num green">2</span><div><strong>Project B</strong><br><code>cd /data/projects/proj-b && fwsw --cc 2</code></div></div>
-                <div class="step"><span class="step-num green">3</span><div><strong>Monitor</strong><br><code>fwj && ntm list</code></div></div>
-                <div class="step"><span class="step-num green">4</span><div><strong>Switch</strong><br><code>ntm attach proj-a</code> / <kbd>Ctrl+B D</kbd></div></div>
-            </div>
-            <h3>Sync All Projects</h3>
-            <pre><span class="cmt"># Quick sync all worktrees</span>
-<span class="cmd">for</span> d <span class="cmd">in</span> /data/projects/roguelike-{1,2,3}; <span class="cmd">do</span> (cd "$d" && <span class="cmd">fws</span>); <span class="cmd">done</span></pre>
-        </div>
+<h1>Agent Flywheel Cheat Sheet</h1>
+<p class="subtitle">Complete workflow for planning, refining, and executing with multi-agent swarms</p>
 
-        <!-- SHELL ALIASES -->
-        <div class="card green">
-            <h2><span class="icon">⚡</span> Shell Aliases</h2>
-            <table>
-                <tr><td><code>fw</code></td><td>flywheel</td></tr>
-                <tr><td><code>fws</code></td><td>flywheel sync</td></tr>
-                <tr><td><code>fwf</code></td><td>flywheel finalize</td></tr>
-                <tr><td><code>fwsw</code></td><td>flywheel startwork</td></tr>
-                <tr><td><code>fwq</code></td><td>flywheel qa</td></tr>
-                <tr><td><code>fwn</code></td><td>flywheel nudge</td></tr>
-                <tr><td><code>fwj</code></td><td>flywheel jobs</td></tr>
-            </table>
-            <h3>Quick Actions</h3>
-            <pre><span class="cmd">fws</span>   <span class="cmt"># Sync to remote (handles branch mismatches)</span>
-<span class="cmd">fwf</span>   <span class="cmt"># Commit checkpoint only</span>
-<span class="cmd">fwn</span>   <span class="cmt"># Nudge idle agents</span></pre>
-        </div>
+<!-- QUICK START -->
+<h2>Quick Start</h2>
+<pre>cd /data/projects/my-repo
+flywheel init                    # Initialize repo + beads + AGENTS.md
+flywheel plan --rounds 2         # Interactive planning interview
+flywheel beads                   # Convert plan to beads  
+flywheel startwork --cc 2        # Spawn agents and start</pre>
 
-        <!-- PROMPT SYSTEM -->
-        <div class="card purple full-width">
-            <h2><span class="icon">📝</span> Prompt System (Oh-My-OpenCode)</h2>
-            <p style="margin-bottom: 1rem; color: var(--text-secondary);">External prompts in <code>~/.config/flywheel/prompts/</code></p>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
-                <div>
-                    <h3>Core Prompts</h3>
-                    <table>
-                        <tr><td><code>SYSTEM_PROMPT.md</code></td><td>Base rules for all agents</td></tr>
-                        <tr><td><code>AGENT_WORKER.md</code></td><td>Implementation work loop</td></tr>
-                        <tr><td><code>INTERVIEW.md</code></td><td>Planning interview</td></tr>
-                        <tr><td><code>QA_AGENT.md</code></td><td>QA checklist</td></tr>
-                    </table>
-                </div>
-                <div>
-                    <h3>Key Rules (SYSTEM_PROMPT)</h3>
-                    <table>
-                        <tr><td><span class="tag blue">Intent</span></td><td>Classify before acting</td></tr>
-                        <tr><td><span class="tag green">Evidence</span></td><td>Proof before complete</td></tr>
-                        <tr><td><span class="tag orange">3 Failures</span></td><td>STOP → REVERT → ESCALATE</td></tr>
-                    </table>
-                </div>
-                <div>
-                    <h3>7-Section Delegation</h3>
-                    <pre style="font-size: 0.75rem;"><span class="flag">1. TASK</span>: Atomic goal
-<span class="flag">2. EXPECTED OUTCOME</span>: Success criteria
-<span class="flag">3. SKILLS</span>: Required expertise
-<span class="flag">4. TOOLS</span>: Allowed commands
-<span class="flag">5. MUST DO</span>: Requirements
-<span class="flag">6. MUST NOT</span>: Forbidden
-<span class="flag">7. CONTEXT</span>: Files, patterns</pre>
-                </div>
-                <div>
-                    <h3>Customize Prompts</h3>
-                    <pre><span class="cmd">vim</span> ~/.config/flywheel/prompts/SYSTEM_PROMPT.md
-<span class="cmd">flywheel doctor</span>  <span class="cmt"># Verify loaded</span></pre>
-                </div>
-            </div>
-        </div>
+<!-- DOODLESTEIN WORKFLOW -->
+<h2>Doodlestein Workflow (Recommended)</h2>
 
+<div class="philosophy">
+    <blockquote>"Planning tokens are far fewer and cheaper than implementation tokens."</blockquote>
+    <p>Spend 85%+ of time on planning. The code will write itself.</p>
+</div>
 
-        <!-- FLYWHEEL COMMANDS -->
-        <div class="card cyan">
-            <h2><span class="icon">🌀</span> Flywheel Commands</h2>
-            <h3>Setup</h3>
-            <pre><span class="cmd">flywheel doctor</span>              <span class="cmt"># Verify tools</span>
-<span class="cmd">flywheel init</span>                 <span class="cmt"># Bootstrap repo</span>
-<span class="cmd">flywheel checkout</span> <span class="arg">feat/x</span> main</pre>
-            
-            <h3>Planning (--max = until approved)</h3>
-            <pre><span class="cmd">flywheel plan</span> <span class="flag">--rounds 2</span>
-<span class="cmd">flywheel refine</span> <span class="flag">--max 5</span>        <span class="cmt"># Until approved</span>
-<span class="cmd">flywheel refine</span> <span class="flag">--max 5 --bg</span>   <span class="cmt"># Background</span>
-<span class="cmd">flywheel beads</span> <span class="flag">--min-beads 50</span></pre>
-            
-            <h3>Execution</h3>
-            <pre><span class="cmd">flywheel startwork</span> <span class="flag">--cc 3 --cod 2 --gmi 1</span></pre>
-        </div>
+<h3>Complete Workflow</h3>
+<pre># 1. Setup
+cd /data/projects/my-feature
+flywheel init
 
-        <!-- BACKGROUND JOBS -->
-        <div class="card cyan">
-            <h2><span class="icon">⏳</span> Background Jobs</h2>
-            <h3>Run Refine in Background</h3>
-            <pre><span class="cmd">flywheel refine</span> <span class="flag">--max 5 --bg</span>
-<span class="cmt"># Returns immediately, stays open for attach</span></pre>
-            
-            <h3>Manage Jobs</h3>
-            <pre><span class="cmd">fwj</span>                           <span class="cmt"># List jobs</span>
-<span class="cmd">flywheel attach</span> <span class="arg">refine-repo-123</span> <span class="cmt"># Attach</span>
-<span class="cmd">flywheel logs</span>                 <span class="cmt"># Tail log</span></pre>
-            
-            <h3>Multiple Projects</h3>
-            <pre><span class="cmd">cd</span> /data/projects/proj1 && <span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
-<span class="cmd">cd</span> /data/projects/proj2 && <span class="cmd">flywheel refine</span> <span class="flag">--bg</span>
-<span class="cmd">fwj</span>  <span class="cmt"># See both running</span></pre>
-            <p style="margin-top: 0.5rem; font-size: 0.85rem; color: var(--accent-green);">✨ Sessions stay open after completion for review</p>
-        </div>
+# 2. Create initial plan (choose one)
+flywheel plan --rounds 2         # Interview mode
+flywheel compete                 # Multi-model generation
 
-        <!-- VIEWING BEADS -->
-        <div class="card pink">
-            <h2><span class="icon">👁️</span> Viewing Beads</h2>
-            <h3>List Beads</h3>
-            <pre><span class="cmd">br list</span>                       <span class="cmt"># All issues</span>
-<span class="cmd">br list</span> <span class="flag">--status=open</span>          <span class="cmt"># Open only</span>
-<span class="cmd">br list</span> <span class="flag">--status=in_progress</span>   <span class="cmt"># In progress</span>
-<span class="cmd">br ready</span>                      <span class="cmt"># Unblocked, ready</span></pre>
-            
-            <h3>View Details</h3>
-            <pre><span class="cmd">br show</span> <span class="arg">bd-abc123</span>             <span class="cmt"># Single bead</span>
-<span class="cmd">br graph</span> <span class="flag">--all</span>                 <span class="cmt"># Dependency graph</span>
-<span class="cmd">bv</span>                            <span class="cmt"># Interactive TUI</span></pre>
-            
-            <h3>AI Triage</h3>
-            <pre><span class="cmd">bv</span> <span class="flag">--robot-triage</span>             <span class="cmt"># JSON priorities</span>
-<span class="cmd">bv</span> <span class="flag">--robot-next</span>               <span class="cmt"># Top pick only</span></pre>
-        </div>
+# 3. Refine plan with GPT Pro web <span class="tag tag-interactive">INTERACTIVE</span>
+flywheel plan-pro
+# - Copies plan, shows prompt for GPT Pro web
+# - You paste GPT output, Claude integrates
+# - After each round: "Continue? [y/N]"
 
-        <!-- WORKING WITH BEADS -->
-        <div class="card pink">
-            <h2><span class="icon">📋</span> Working with Beads</h2>
-            <h3>Create</h3>
-            <pre><span class="cmd">br create</span> <span class="str">"Task title"</span> <span class="flag">-t</span> task <span class="flag">-p</span> 2
-<span class="cmd">br create</span> <span class="str">"Bug title"</span> <span class="flag">-t</span> bug <span class="flag">-p</span> 1
-<span class="cmd">br q</span> <span class="str">"Quick note"</span>              <span class="cmt"># Fast capture</span></pre>
-            
-            <h3>Update Status</h3>
-            <pre><span class="cmd">br update</span> <span class="arg">bd-xxx</span> <span class="flag">--status=in_progress</span>
-<span class="cmd">br close</span> <span class="arg">bd-xxx</span>
-<span class="cmd">br reopen</span> <span class="arg">bd-xxx</span></pre>
-            
-            <h3>Dependencies</h3>
-            <pre><span class="cmd">br dep add</span> <span class="arg">bd-child</span> <span class="arg">bd-parent</span>
-<span class="cmd">br dep tree</span> <span class="arg">bd-xxx</span></pre>
-        </div>
+# 4. Convert plan to beads
+flywheel beads --min-beads 50
 
-        <!-- SPAWNING -->
-        <div class="card green">
-            <h2><span class="icon">🚀</span> Spawn Agents</h2>
-            <pre><span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2</span>
-<span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2 --cod=1 --gmi=1</span>
-<span class="cmt"># Or use alias:</span>
-<span class="cmd">fwsw</span> <span class="flag">--cc 3 --cod 2</span></pre>
-            
-            <h3>Agent Flags</h3>
-            <table>
-                <tr><td><span class="tag purple">Claude</span></td><td><code>--cc=N</code></td></tr>
-                <tr><td><span class="tag green">Codex</span></td><td><code>--cod=N</code></td></tr>
-                <tr><td><span class="tag orange">Gemini</span></td><td><code>--gmi=N</code></td></tr>
-            </table>
-        </div>
+# 5. Polish beads (6-9 iterations) <span class="tag tag-interactive">INTERACTIVE</span>
+flywheel polish
+# - [C] Continue  [F] Fresh session  [X] Codex final  [D] Done
 
-        <!-- SENDING PROMPTS -->
-        <div class="card orange">
-            <h2><span class="icon">📨</span> Send Prompts</h2>
-            <pre><span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="str">"prompt"</span>       <span class="cmt"># All agents</span>
-<span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="flag">--pane=2</span> <span class="str">"msg"</span> <span class="cmt"># Specific pane</span>
-<span class="cmd">ntm send</span> <span class="arg">myrepo</span> <span class="flag">--cc=</span> <span class="str">"msg"</span>    <span class="cmt"># Claude only</span>
-<span class="cmd">ntm interrupt</span> <span class="arg">myrepo</span>          <span class="cmt"># Stop all</span></pre>
-        </div>
+# 6. Implement
+flywheel startwork --cc 2
+ntm attach my-feature</pre>
 
-        <!-- SESSION MANAGEMENT -->
-        <div class="card purple">
-            <h2><span class="icon">🖥️</span> Sessions</h2>
-            <pre><span class="cmd">ntm list</span>                       <span class="cmt"># All sessions</span>
-<span class="cmd">ntm status</span> <span class="arg">myrepo</span>              <span class="cmt"># Detailed info</span>
-<span class="cmd">ntm attach</span> <span class="arg">myrepo</span>              <span class="cmt"># Enter session</span>
-<span class="cmd">ntm view</span> <span class="arg">myrepo</span>                <span class="cmt"># Tile panes</span>
-<span class="cmd">echo</span> y | <span class="cmd">ntm kill</span> <span class="arg">myrepo</span>      <span class="cmt"># Kill</span></pre>
-            
-            <h3>Tmux Hotkeys</h3>
-            <table>
-                <tr><td><kbd>Ctrl+B</kbd> <kbd>D</kbd></td><td>Detach (keeps running)</td></tr>
-                <tr><td><kbd>Ctrl+B</kbd> <kbd>Z</kbd></td><td>Zoom pane</td></tr>
-                <tr><td><kbd>Ctrl+B</kbd> <kbd>[</kbd></td><td>Scroll mode</td></tr>
-                <tr><td><kbd>Ctrl+B</kbd> <kbd>1-9</kbd></td><td>Switch pane</td></tr>
-            </table>
-        </div>
+<h3>Model Usage by Phase</h3>
+<table>
+    <tr><th>Phase</th><th>Model</th><th>Tool</th><th>Notes</th></tr>
+    <tr><td>Plan creation</td><td>Claude Opus</td><td><span class="tag tag-cli">CLI</span></td><td>Has code access</td></tr>
+    <tr><td>Plan refinement</td><td>GPT 5.2 Pro Extended</td><td><span class="tag tag-web">WEB</span></td><td>Manual copy/paste</td></tr>
+    <tr><td>Plan integration</td><td>Claude Opus</td><td><span class="tag tag-cli">CLI</span></td><td>Merges GPT suggestions</td></tr>
+    <tr><td>Plan → Beads</td><td>Claude Opus</td><td><span class="tag tag-cli">CLI</span></td><td>Uses bd/br tools</td></tr>
+    <tr><td>Bead polish (6-9x)</td><td>Claude Opus</td><td><span class="tag tag-cli">CLI</span></td><td>Main iterations</td></tr>
+    <tr><td>Bead final pass</td><td>Codex GPT 5.2</td><td><span class="tag tag-cli">CLI</span></td><td>Fresh perspective</td></tr>
+</table>
 
-        <!-- MEMORY -->
-        <div class="card red">
-            <h2><span class="icon">🧠</span> Memory & Scan</h2>
-            <pre><span class="cmd">cm context</span> <span class="str">"task"</span>      <span class="cmt"># Get context</span>
-<span class="cmd">cm reflect</span>              <span class="cmt"># Extract learnings</span>
-<span class="cmd">cass search</span> <span class="str">"query"</span>    <span class="cmt"># Search history</span>
-<span class="cmd">ubs .</span>                  <span class="cmt"># Scan codebase</span></pre>
-        </div>
+<!-- COMMANDS -->
+<h2>All Commands</h2>
+<table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr><td><code>flywheel init</code></td><td>Initialize repo (beads, AGENTS.md, .flywheel/)</td></tr>
+    <tr><td><code>flywheel plan [--rounds N]</code></td><td>Interactive planning with Claude</td></tr>
+    <tr><td><code>flywheel plan-pro</code></td><td><span class="tag tag-interactive">INTERACTIVE</span> GPT Pro guided planning</td></tr>
+    <tr><td><code>flywheel compete</code></td><td>Generate 4 competing plans + synthesize</td></tr>
+    <tr><td><code>flywheel refine [--max N]</code></td><td>Approval mode refinement with Codex</td></tr>
+    <tr><td><code>flywheel beads [--min-beads N]</code></td><td>Convert plan to beads (Doodlestein prompt)</td></tr>
+    <tr><td><code>flywheel polish</code></td><td><span class="tag tag-interactive">INTERACTIVE</span> Bead refinement</td></tr>
+    <tr><td><code>flywheel startwork [--cc N]</code></td><td>Spawn agent swarm</td></tr>
+    <tr><td><code>flywheel status</code></td><td>Show progress</td></tr>
+    <tr><td><code>flywheel jobs</code></td><td>List tmux sessions</td></tr>
+    <tr><td><code>flywheel attach [session]</code></td><td>Attach to session</td></tr>
+    <tr><td><code>flywheel doctor</code></td><td>Check dependencies</td></tr>
+</table>
 
-        <!-- TROUBLESHOOTING -->
-        <div class="card red full-width">
-            <h2><span class="icon">🔧</span> Troubleshooting</h2>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
-                <div>
-                    <h3>Session Name = Dir Name</h3>
-                    <pre><span class="cmd">cd</span> /data/projects/<span class="arg">myrepo</span>
-<span class="cmd">ntm spawn</span> <span class="arg">myrepo</span> <span class="flag">--cc=2</span></pre>
-                </div>
-                <div>
-                    <h3>Push Branch Mismatch</h3>
-                    <pre><span class="cmt"># fws handles automatically:</span>
-<span class="cmt"># local-branch → origin/different-name</span>
-<span class="cmd">fws</span>  <span class="cmt"># Just works™</span></pre>
-                </div>
-                <div>
-                    <h3>View Background Job</h3>
-                    <pre><span class="cmd">flywheel attach</span> <span class="arg">refine-xxx</span>
-<span class="cmt"># Or tail the log:</span>
-<span class="cmd">flywheel logs</span></pre>
-                </div>
-                <div>
-                    <h3>Kill Stuck Job</h3>
-                    <pre><span class="cmd">tmux kill-session -t</span> <span class="arg">refine-xxx</span></pre>
-                </div>
-            </div>
-        </div>
+<!-- PLAN-PRO -->
+<h2>Plan-Pro: GPT Pro Guided Planning</h2>
+<pre>flywheel plan-pro    # Interactive, no round count needed</pre>
 
-        <!-- KEY SYNTAX -->
-        <div class="card orange full-width">
-            <h2><span class="icon">⚠️</span> Key Syntax</h2>
-            <table>
-                <tr><th>Action</th><th>✅ Correct</th><th>❌ Wrong</th></tr>
-                <tr><td>Background refine</td><td><code>flywheel refine --max 5 --bg</code></td><td><code>flywheel refine &</code></td></tr>
-                <tr><td>Until approved</td><td><code>flywheel refine --max 5</code></td><td><code>flywheel refine --iters 5</code> (legacy)</td></tr>
-                <tr><td>Send to Claude</td><td><code>ntm send S --cc= "msg"</code></td><td><code>ntm send S --cc "msg"</code></td></tr>
-                <tr><td>Sync to remote</td><td><code>fws</code></td><td><code>git push</code> (may fail on branch mismatch)</td></tr>
-            </table>
-        </div>
-    </div>
-    
-    <footer style="text-align: center; margin-top: 2rem; color: var(--text-secondary); font-size: 0.85rem;">
-        ✅ Flywheel-Lite v0.6.0 • <a href="https://github.com/urgood2/flywheel-lite" style="color: var(--accent-cyan);">GitHub</a>
-    </footer>
+<h3>How It Works</h3>
+<ol>
+    <li>Shows current plan location and size</li>
+    <li>Displays prompt to copy to GPT 5.2 Pro (Extended Reasoning)</li>
+    <li>You manually copy plan + prompt to ChatGPT Pro web</li>
+    <li>Wait for GPT to finish (can take 10-30 min)</li>
+    <li>Paste GPT response back into terminal</li>
+    <li>Claude Code integrates revisions</li>
+    <li><strong>"Continue to another round? [y/N]"</strong></li>
+</ol>
+
+<h3>GPT Pro Review Prompt</h3>
+<div class="prompt-box">Carefully review this entire plan for me and come up with your best revisions 
+in terms of better architecture, new features, changed features, etc. to make 
+it better, more robust/reliable, more performant, more compelling/useful, etc. 
+For each proposed change, give me your detailed analysis and rationale/justification 
+for why it would make the project better along with the git-diff style change 
+versus the original plan shown below:</div>
+
+<!-- BEADS -->
+<h2>Beads: Plan → Tasks</h2>
+<pre>flywheel beads                   # Default: 50+ beads
+flywheel beads --min-beads 100   # More granular
+flywheel beads --plan custom.md  # Custom plan</pre>
+
+<h3>Beads Conversion Prompt (Doodlestein)</h3>
+<div class="prompt-box">OK so now read ALL of [PLAN]; please take ALL of that and elaborate on it 
+and use it to create a comprehensive and granular set of beads for all this 
+with tasks, subtasks, and dependency structure overlaid, with detailed comments 
+so the whole thing is totally self-contained and self-documenting (including 
+relevant background, reasoning/justification, considerations, etc.-- anything 
+we would want our "future self" to know about the goals and intentions and 
+thought process and how it serves the over-arching goals of the project.).
+
+The beads should be so detailed that we never need to consult back to the 
+original markdown plan document.</div>
+
+<!-- POLISH -->
+<h2>Polish: Interactive Bead Refinement</h2>
+<pre>flywheel polish                  # Default: planning/PLAN.md
+flywheel polish custom-plan.md   # Custom plan file</pre>
+
+<h3>"Measure N times, implement once"</h3>
+<p>Run 6-9 iterations until steady state. After each iteration, choose:</p>
+
+<div style="margin: 1rem 0;">
+    <span class="choice-box"><strong>[C]</strong> Continue</span>
+    <span class="choice-box"><strong>[F]</strong> Fresh session</span>
+    <span class="choice-box"><strong>[X]</strong> Codex final</span>
+    <span class="choice-box"><strong>[D]</strong> Done</span>
+</div>
+
+<table>
+    <tr><th>Choice</th><th>When</th><th>What Happens</th></tr>
+    <tr><td><strong>C</strong></td><td>Improvements happening</td><td>Run polish prompt again, same session</td></tr>
+    <tr><td><strong>F</strong></td><td>Flatlined</td><td>Fresh context reset, then continue</td></tr>
+    <tr><td><strong>X</strong></td><td>Ready for final</td><td>Run Codex with high reasoning</td></tr>
+    <tr><td><strong>D</strong></td><td>Done</td><td>Exit with summary</td></tr>
+</table>
+
+<h3>Polish Prompt (Doodlestein)</h3>
+<div class="prompt-box">Reread AGENTS.md so it is still fresh in your mind. Then read ALL of [PLAN].
+Use ultrathink. Check over each bead super carefully-- are you sure it makes 
+sense? Is it optimal? Could we change anything to make the system work better 
+for users? If so, revise the beads. It is a lot easier and faster to operate 
+in plan space before we start implementing these things!
+
+DO NOT OVERSIMPLIFY THINGS! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY!
+
+Also make sure that as part of the beads we include comprehensive unit tests 
+and e2e test scripts with great, detailed logging so we can be sure that 
+everything is working perfectly after implementation.</div>
+
+<!-- BEADS MANAGEMENT -->
+<h2>Task Management (Beads)</h2>
+<div class="grid">
+<div class="card">
+<h3>Create Tasks</h3>
+<pre>br add -t epic -p P1 "Main Feature" "Description"
+br add -t task -p P1 "Sub-task" "Criteria"
+br add -t bug -p P1 "Fix crash" "Repro steps"</pre>
+</div>
+<div class="card">
+<h3>View Tasks</h3>
+<pre>bv                       # View all
+bv --robot-triage        # AI recommendations
+br ready                 # Unblocked tasks
+br list                  # List all</pre>
+</div>
+<div class="card">
+<h3>Work on Tasks</h3>
+<pre>br update &lt;id&gt; --status=in_progress   # Claim
+br close &lt;id&gt;                          # Complete
+br update &lt;id&gt; --parent &lt;epic-id&gt;      # Set parent
+br dep add &lt;id&gt; --blocked-by &lt;other&gt;   # Dependency</pre>
+</div>
+</div>
+
+<!-- AGENTS -->
+<h2>Spawning Agents</h2>
+<div class="grid">
+<div class="card">
+<h3>With Flywheel</h3>
+<pre>flywheel startwork --cc 2 --cod 1 --gmi 1
+flywheel startwork --cc 3   # Claude-only</pre>
+</div>
+<div class="card">
+<h3>Direct NTM</h3>
+<pre>ntm spawn my-game --cc=2 --cod=1
+ntm list           # List sessions
+ntm attach my-game # Attach
+ntm kill my-game   # Kill</pre>
+</div>
+<div class="card">
+<h3>Sending Prompts</h3>
+<pre>ntm send my-game --all "Message"    # Broadcast
+ntm send my-game --cc "Task"        # Claude only
+ntm send my-game --pane=2 "Task"    # Specific</pre>
+</div>
+</div>
+
+<!-- APR -->
+<h2>APR Commands</h2>
+<table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr><td><code>apr setup</code></td><td>Configure workflow (one-time)</td></tr>
+    <tr><td><code>apr run &lt;N&gt;</code></td><td>Run refinement round N</td></tr>
+    <tr><td><code>apr status</code></td><td>Check completion status</td></tr>
+    <tr><td><code>apr show &lt;N&gt;</code></td><td>View round N output</td></tr>
+    <tr><td><code>apr diff 1 2</code></td><td>Compare rounds</td></tr>
+</table>
+
+<!-- FILES -->
+<h2>Files & Locations</h2>
+<table>
+    <tr><th>File</th><th>Purpose</th></tr>
+    <tr><td><code>planning/PLAN_v0.md</code></td><td>Initial plan</td></tr>
+    <tr><td><code>planning/PLAN_vN.md</code></td><td>Plan version N</td></tr>
+    <tr><td><code>planning/PLAN.md</code></td><td>Final plan</td></tr>
+    <tr><td><code>planning/gpt_roundN.md</code></td><td>GPT Pro output</td></tr>
+    <tr><td><code>AGENTS.md</code></td><td>Agent instructions</td></tr>
+    <tr><td><code>.beads/</code></td><td>Beads database</td></tr>
+    <tr><td><code>/tmp/polish_*.log</code></td><td>Polish logs</td></tr>
+</table>
+
+<!-- TROUBLESHOOTING -->
+<h2>Troubleshooting</h2>
+<pre>flywheel doctor              # Check all dependencies
+ntm deps -v                  # Detailed dependency check
+
+ntm interrupt my-game        # Send Ctrl+C
+ntm kill my-game             # Kill session
+tmux kill-session -t name    # Force kill
+
+flywheel jobs                # List background jobs
+flywheel attach &lt;job&gt;        # Attach to job</pre>
+
+<p style="margin-top: 2rem; color: var(--muted); text-align: center;">
+    All prompts: <code>/data/projects/flywheel-lite/prompts/DOODLESTEIN_PROMPTS.md</code>
+</p>
+
 </body>
 </html>
