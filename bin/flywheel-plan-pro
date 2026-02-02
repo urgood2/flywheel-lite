@@ -19,11 +19,11 @@ NC='\033[0m'
 # Create planning directory
 mkdir -p "$PLANNING_DIR"
 
-clear
+clear 2>/dev/null || true
 echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  FLYWHEEL PLAN-PRO${BLUE} - Guided Planning with GPT Pro Integration   ║${NC}"
-echo -e "${BLUE}║  Project: $PROJECT_NAME                                           ${NC}"
-echo -e "${BLUE}║  Rounds: $ROUNDS (GPT Pro → Claude Code iterations)               ${NC}"
+echo -e "${BLUE}║  ${BOLD}FLYWHEEL PLAN-PRO${NC}${BLUE} - Guided Planning with GPT Pro Integration   ║${NC}"
+echo -e "${BLUE}║  Project: $PROJECT_NAME${NC}"
+echo -e "${BLUE}║  Rounds: $ROUNDS (GPT Pro → Claude Code iterations)${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
 
@@ -71,16 +71,15 @@ for round in $(seq 1 $ROUNDS); do
     echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
     echo
     
-    # Copy plan to clipboard if possible
-    if command -v xclip &> /dev/null; then
-        cat "$CURRENT_PLAN" | xclip -selection clipboard
-        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
-    elif command -v pbcopy &> /dev/null; then
-        cat "$CURRENT_PLAN" | pbcopy
-        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
+    # Try to copy plan to clipboard (graceful failure)
+    if command -v pbcopy &> /dev/null; then
+        cat "$CURRENT_PLAN" | pbcopy 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
+    elif command -v xclip &> /dev/null && [[ -n "${DISPLAY:-}" ]]; then
+        cat "$CURRENT_PLAN" | xclip -selection clipboard 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
     else
-        echo -e "${YELLOW}⚠ Clipboard not available. Copy manually:${NC}"
-        echo -e "   cat $CURRENT_PLAN | head -100"
+        echo -e "${YELLOW}📋 Copy the plan manually:${NC}"
+        echo -e "   cat $CURRENT_PLAN"
+        echo
     fi
     echo
     
@@ -123,18 +122,33 @@ PROMPT
     
     NEW_PLAN="$PLANNING_DIR/PLAN_v$round.md"
     
-    # Create the integration prompt
-    INTEGRATE_PROMPT="OK, now integrate these revisions to the markdown plan in-place; use ultrathink and be meticulous. Update $CURRENT_PLAN with the integrated changes and save as $NEW_PLAN. At the end, tell me which changes you wholeheartedly agree with, which you somewhat agree with, and which you disagree with.
+    # Show integration prompt
+    echo -e "${BOLD}Running Claude Code to integrate revisions...${NC}"
+    echo -e "Creating: $NEW_PLAN"
+    echo
+    
+    # Create the integration prompt file
+    INTEGRATE_PROMPT_FILE="$PLANNING_DIR/.integrate_prompt_$round.txt"
+    cat > "$INTEGRATE_PROMPT_FILE" << INTEGRATEPROMPT
+Read the current plan at $CURRENT_PLAN and integrate the following GPT Pro revisions.
+Save the integrated plan as $NEW_PLAN.
+
+Be meticulous. At the end, tell me which changes you wholeheartedly agree with, 
+which you somewhat agree with, and which you disagree with.
 
 GPT Pro's revisions:
 
-$(cat "$GPT_OUTPUT_FILE")"
+$(cat "$GPT_OUTPUT_FILE")
+INTEGRATEPROMPT
 
-    echo -e "${BOLD}Running Claude Code to integrate revisions...${NC}"
-    echo
-    
     # Run Claude Code
-    echo "$INTEGRATE_PROMPT" | claude --dangerously-skip-permissions -p - 2>&1 | tee "$PLANNING_DIR/integration_round${round}.log"
+    if command -v claude &> /dev/null; then
+        claude --dangerously-skip-permissions -p "$(cat "$INTEGRATE_PROMPT_FILE")" 2>&1 | tee "$PLANNING_DIR/integration_round${round}.log"
+    else
+        echo -e "${RED}Error: claude command not found${NC}"
+        echo -e "Please run this manually:"
+        echo -e "  claude -p '$(head -5 "$INTEGRATE_PROMPT_FILE")...'"
+    fi
     
     # Check if new plan was created
     if [[ -f "$NEW_PLAN" ]]; then
@@ -143,7 +157,14 @@ $(cat "$GPT_OUTPUT_FILE")"
         echo -e "   Lines: $(wc -l < "$NEW_PLAN")"
         CURRENT_PLAN="$NEW_PLAN"
     else
-        echo -e "${YELLOW}⚠ New plan not created. Using previous version.${NC}"
+        echo -e "${YELLOW}⚠ New plan not auto-created. Claude may have written to a different path.${NC}"
+        echo -e "Check the output above and manually copy if needed."
+        read -p "Press Enter to continue..."
+        
+        # Check again after user interaction
+        if [[ -f "$NEW_PLAN" ]]; then
+            CURRENT_PLAN="$NEW_PLAN"
+        fi
     fi
     echo
     
@@ -162,7 +183,7 @@ done
 # FINAL: Summary and Next Steps
 # ============================================================================
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  PLAN REFINEMENT COMPLETE${GREEN}                                        ║${NC}"
+echo -e "${GREEN}║  ${BOLD}PLAN REFINEMENT COMPLETE${NC}${GREEN}                                        ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
 echo -e "${BOLD}📄 Plan Versions:${NC}"
