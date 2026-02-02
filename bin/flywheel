@@ -57,6 +57,31 @@ load_config() {
 
 git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
 # Sanitize session name for tmux (only allow a-z, A-Z, 0-9, _, -)
+
+# Check if in a git worktree (not main repo)
+is_worktree() {
+  local git_dir
+  git_dir=$(git rev-parse --git-dir 2>/dev/null)
+  [[ "$git_dir" == *".git/worktrees/"* ]] || [[ -f ".git" ]]
+}
+
+# Clean planning files for fresh start
+clean_planning() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  cd "$root"
+  local removed=0
+  shopt -s nullglob
+  for f in planning/PLAN_v*.md planning/PLAN.md planning/PLAN_synthesized.md planning/PLAN_pre_compete.md planning/INTERVIEW_TRANSCRIPT.md; do
+    [[ -f "$f" ]] && rm -f "$f" && ((removed++)) || true
+  done
+  for f in planning/PLAN_codex_iter*.md planning/PLAN_opus_*.md planning/gpt_round*.md planning/integration_round*.log; do
+    [[ -f "$f" ]] && rm -f "$f" && ((removed++)) || true
+  done
+  shopt -u nullglob
+  [[ -d "planning/competing" ]] && rm -rf "planning/competing" && ((removed++)) || true
+  [[ $removed -gt 0 ]] && note "Cleaned $removed stale planning file(s)" || note "No stale planning files found"
+}
+
 sanitize_session_name() {
   echo "$1" | tr "@.:" "---" | sed "s/[^a-zA-Z0-9_-]/-/g"
 }
@@ -115,36 +140,6 @@ checkout_branch() {
   git checkout "$base"; git pull --ff-only || true; git checkout -b "$branch"
 }
 
-
-# Check if in a git worktree (not main repo)
-is_worktree() {
-  local git_dir
-  git_dir=$(git rev-parse --git-dir 2>/dev/null)
-  [[ "$git_dir" == *".git/worktrees/"* ]] || [[ -f ".git" ]]
-}
-
-# Clean planning files for fresh start
-clean_planning() {
-  local root; root="$(git_root)" || die "Not in a git repo."
-  cd "$root"
-  local removed=0
-  
-  # Remove versioned plans
-  for f in planning/PLAN_v*.md planning/PLAN.md planning/PLAN_synthesized.md planning/PLAN_pre_compete.md planning/INTERVIEW_TRANSCRIPT.md; do
-    [[ -f "$f" ]] && rm -f "$f" && ((removed++))
-  done
-  
-  # Remove iteration files
-  for f in planning/PLAN_codex_iter*.md planning/PLAN_opus_*.md planning/gpt_round*.md planning/integration_round*.log; do
-    [[ -f "$f" ]] && rm -f "$f" && ((removed++))
-  done
-  
-  # Clean competing plans dir
-  [[ -d "planning/competing" ]] && rm -rf "planning/competing" && ((removed++))
-  
-  [[ $removed -gt 0 ]] && note "Cleaned $removed stale planning file(s)" || note "No stale planning files found"
-}
-
 init_repo() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"; cd "$root"
@@ -159,11 +154,7 @@ Multi-agent repo via NTM. Use Agent Mail for coordination. Run UBS before commit
 EOF
     note "Wrote AGENTS.md"
   fi
-  # Auto-clean stale planning files in worktrees
-  if is_worktree; then
-    note "Detected worktree - cleaning stale planning files..."
-    clean_planning
-  fi
+  if is_worktree; then note "Detected worktree - cleaning stale planning files..."; clean_planning; fi
   note "Repo initialized. Next: flywheel plan"
 }
 

@@ -42,7 +42,8 @@ ntm attach my-feature
 | Command | Description |
 |---------|-------------|
 | `flywheel doctor` | Check all dependencies |
-| `flywheel init` | Initialize repo (beads, AGENTS.md, .flywheel/) |
+| `flywheel init` | Initialize repo (auto-cleans planning in worktrees) |
+| `flywheel clean` | Remove stale planning files for fresh start |
 | `flywheel checkout <branch>` | Create/switch branches |
 | `flywheel plan [--rounds N]` | Interactive planning with Claude |
 | `flywheel refine [--max N]` | **Approval mode** (default) - iterate until approved |
