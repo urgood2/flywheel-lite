@@ -377,4 +377,45 @@ ru prune                       # Find orphans</pre></div></div>
 <h3>Daily Workflow</h3>
 <table><tr><th>When</th><th>Commands</th></tr><tr><td>Morning</td><td><code>ru sync -j4</code> then <code>ru status</code></td></tr><tr><td>Work</td><td><code>cd project</code> then <code>flywheel plan-pro</code> then <code>flywheel startwork</code></td></tr><tr><td>End session</td><td><code>flywheel qa</code> then <code>flywheel sync</code></td></tr><tr><td>End day</td><td><code>ru sync</code> then <code>ru status</code></td></tr></table>
 </body>
+
+<!-- WORKTREE MANAGEMENT -->
+<h2>Worktree Management</h2>
+<div class="philosophy"><p>Git <strong>worktrees</strong> let you work on multiple branches simultaneously without separate clones. Use <code>wt</code> for branches, <code>ru</code> for repos.</p></div>
+
+<div class="grid">
+<div class="card">
+<h3>Local Commands</h3>
+<pre>wt add &lt;branch&gt;        # Create worktree
+wt list                # List worktrees
+wt sync                # Update all
+wt remove &lt;branch&gt;     # Remove worktree
+wt-new &lt;branch&gt; [base] # NEW branch + push</pre>
+</div>
+<div class="card">
+<h3>VPS-to-Local Sync</h3>
+<pre>vps-wt new repo branch base  # Create on both
+vps-wt add repo branch       # Add on both
+vps-wt sync repo             # Sync VPS→local
+vps-wt list repo             # List VPS</pre>
+</div>
+<div class="card">
+<h3>Locations</h3>
+<pre># VPS
+/data/projects/repo@branch-sanitized/
+
+# Local
+~/projects/repo@branch-sanitized/
+
+# Branch / → - in folder names</pre>
+</div>
+</div>
+
+<h3>Start on VPS, Continue on Laptop</h3>
+<table>
+<tr><th>Where</th><th>Commands</th></tr>
+<tr><td>VPS</td><td><code>vps-wt new TheGameJamTemplate feature/x master</code> → work → <code>git push</code></td></tr>
+<tr><td>Laptop</td><td><code>vps-wt sync TheGameJamTemplate</code> → <code>cd ~/projects/TheGameJamTemplate@feature-x</code></td></tr>
+</table>
+
+</body>
 </html>

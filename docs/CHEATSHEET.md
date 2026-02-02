@@ -565,3 +565,92 @@ PARALLEL=4
 **Repos lists:** `~/.config/ru/repos.d/`
 - `public.txt` - Public repos
 - `private.txt` - Private repos
+
+
+---
+
+## WORKTREE MANAGEMENT
+
+Git worktrees let you work on multiple branches simultaneously without separate clones.
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `wt add <branch>` | Create worktree for existing branch |
+| `wt list` | List all worktrees |
+| `wt remove <branch>` | Remove worktree |
+| `wt sync` | Fetch and update all worktrees |
+| `wt-new <branch> [base]` | Create NEW branch + worktree + push |
+
+### VPS-to-Local Sync
+
+Create worktrees on VPS and automatically sync to local machine:
+
+```bash
+# Create new feature branch on VPS, auto-sync to local
+vps-wt new TheGameJamTemplate feature/my-feature master
+
+# Add existing branch as worktree on both machines
+vps-wt add roguelike-sim-incremental urgood2/flag
+
+# Sync all VPS worktrees to local
+vps-wt sync TheGameJamTemplate
+
+# List VPS worktrees
+vps-wt list TheGameJamTemplate
+```
+
+### Local Worktree Commands
+
+```bash
+# Inside a repo
+cd /data/projects/TheGameJamTemplate
+
+# Create worktree for existing remote branch
+wt add urgood2/roguelike-1
+
+# Create NEW branch + worktree + push to remote
+wt-new feature/new-ui master
+
+# List all worktrees
+wt list
+
+# Update all worktrees
+wt sync
+
+# Navigate to worktree
+cd $(wt cd urgood2/roguelike-1)
+
+# Remove worktree
+wt remove urgood2/roguelike-1
+```
+
+### Worktree Locations
+
+- **VPS:** `/data/projects/<repo>@<branch-sanitized>/`
+- **Local:** `~/projects/<repo>@<branch-sanitized>/`
+
+Branch names with `/` are sanitized: `urgood2/flag` becomes `urgood2-flag`
+
+### Workflow: Start Feature on VPS, Continue on Laptop
+
+```bash
+# On VPS: Start new feature
+vps-wt new TheGameJamTemplate feature/awesome master
+cd /data/projects/TheGameJamTemplate@feature-awesome
+# ... work on feature ...
+git add . && git commit -m "WIP" && git push
+
+# On Laptop later: Get the worktree
+vps-wt sync TheGameJamTemplate
+cd ~/projects/TheGameJamTemplate@feature-awesome
+# ... continue work ...
+```
+
+### Note on RU vs Worktrees
+
+- **RU** manages which **repos** you have (clones entire repositories)
+- **Worktrees** manage which **branches** you have checked out (shares .git)
+- RU's `@branch` syntax doesn't support branches with `/` in the name
+- Use `wt` commands for branch-based work, `ru` for repo-based work
