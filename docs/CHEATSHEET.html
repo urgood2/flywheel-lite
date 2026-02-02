@@ -363,5 +363,18 @@ flywheel attach &lt;job&gt;        # Attach to job</pre>
     All prompts: <code>/data/projects/flywheel-lite/prompts/DOODLESTEIN_PROMPTS.md</code>
 </p>
 
+<!-- RU INTEGRATION -->
+<h2>RU Integration (Multi-Repo Management)</h2>
+<div class="philosophy"><p><strong>RU</strong> manages <em>which repos</em> you have. <strong>Flywheel</strong> manages <em>how you work</em> in them.</p></div>
+<div class="grid"><div class="card"><h3>Add Repos</h3><pre>ru add owner/repo              # Public
+ru add owner/repo --private    # Private
+ru add owner/repo@branch       # Pin branch</pre></div><div class="card"><h3>Sync All</h3><pre>ru sync                        # Clone + pull
+ru sync -j4                    # Parallel
+ru sync --autostash            # Stash first
+ru status --fetch              # Check all</pre></div><div class="card"><h3>Manage</h3><pre>ru list --paths                # Show paths
+ru doctor                      # Health check
+ru prune                       # Find orphans</pre></div></div>
+<h3>Daily Workflow</h3>
+<table><tr><th>When</th><th>Commands</th></tr><tr><td>Morning</td><td><code>ru sync -j4</code> then <code>ru status</code></td></tr><tr><td>Work</td><td><code>cd project</code> then <code>flywheel plan-pro</code> then <code>flywheel startwork</code></td></tr><tr><td>End session</td><td><code>flywheel qa</code> then <code>flywheel sync</code></td></tr><tr><td>End day</td><td><code>ru sync</code> then <code>ru status</code></td></tr></table>
 </body>
 </html>

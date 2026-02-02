@@ -442,3 +442,126 @@ flywheel qa                      # Verify everything works
 flywheel finalize --push         # Commit and push
 # Or: flywheel sync
 ```
+
+---
+
+## RU INTEGRATION (Multi-Repo Management)
+
+### RU vs Flywheel: How They Fit Together
+
+| Tool | Purpose | Scope |
+|------|---------|-------|
+| **RU** (Repo Updater) | Manage **which repos** you have | Multi-repo |
+| **Flywheel** | Manage **how you work** in a repo | Single-repo |
+
+### RU Quick Reference
+
+```bash
+# Add repos
+ru add owner/repo                  # Add public repo
+ru add owner/repo --private        # Add private repo
+ru add owner/repo@branch           # Pin to branch
+
+# Sync all repos
+ru sync                            # Clone missing + pull all
+ru sync -j4                        # Parallel (4 workers)
+ru sync --autostash                # Stash local changes first
+ru sync --dry-run                  # Preview only
+
+# Check status
+ru status                          # All repos
+ru status --fetch                  # Fetch + show ahead/behind
+ru list                            # Show configured repos
+ru list --paths                    # Show full paths
+
+# Manage
+ru doctor                          # Health check
+ru prune                           # Find orphan repos
+ru remove owner/repo               # Remove from list
+```
+
+### New Project Workflow
+
+**Option 1: Create on GitHub, then add**
+```bash
+gh repo create my-project --public --clone=false
+ru add yourname/my-project
+ru sync
+cd /data/projects/my-project
+flywheel init
+flywheel plan
+```
+
+**Option 2: Create locally, then push**
+```bash
+cd /data/projects
+mkdir my-project && cd my-project
+git init
+flywheel init
+echo "# My Project" > README.md
+git add -A && git commit -m "Initial commit"
+gh repo create my-project --public --source=. --push
+ru add yourname/my-project
+```
+
+**Option 3: Fork existing**
+```bash
+gh repo fork owner/repo --clone=false
+ru add yourname/repo
+ru sync
+cd /data/projects/repo
+flywheel init
+```
+
+### Add Multiple Repos
+
+```bash
+# Edit directly
+nano ~/.config/ru/repos.d/public.txt
+
+# Or import from file
+cat > repos.txt << EOF
+owner/repo1
+owner/repo2@main
+owner/repo3
+EOF
+ru import repos.txt
+```
+
+### Daily Workflow
+
+```bash
+# Morning: sync all
+ru sync -j4
+ru status
+
+# Work session
+cd /data/projects/my-project
+flywheel plan-pro          # Or continue existing work
+flywheel beads
+flywheel polish
+flywheel startwork --cc 2
+
+# End of session
+flywheel qa
+flywheel sync
+
+# End of day
+ru sync
+ru status
+```
+
+### RU Configuration
+
+**Config file:** `~/.config/ru/config`
+```bash
+PROJECTS_DIR=/data/projects
+LAYOUT=flat                # flat | owner-repo | full
+UPDATE_STRATEGY=ff-only    # ff-only | rebase | merge
+AUTOSTASH=false
+PARALLEL=4
+```
+
+**Repos lists:** `~/.config/ru/repos.d/`
+- `public.txt` - Public repos
+- `private.txt` - Private repos
