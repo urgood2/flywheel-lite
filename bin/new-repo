@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# new-repo - Create a new repository, push to GitHub, and add to ru sync
+# Usage: new-repo <repo-name> [--public] [--no-sync]
+
+die() { echo "❌ ERROR: $*" >&2; exit 1; }
+note() { echo "==> $*" >&2; }
+success() { echo "✓ $*" >&2; }
+
+show_help() {
+  cat << 'EOF'
+new-repo - Create a new repository and set up sync
+
+USAGE:
+  new-repo <repo-name> [options]
+
+OPTIONS:
+  --public      Create as public repository (default: private)
+  --no-sync     Don't add to ru sync
+  --org <name>  GitHub organization (default: urgood2)
+  --path <dir>  Local path (default: ~/repos/<repo-name>)
+  -h, --help    Show this help
+
+EXAMPLES:
+  new-repo my-project                    # Private repo in ~/repos/my-project
+  new-repo my-tool --public              # Public repo
+  new-repo work-proj --org mycompany     # In organization
+  new-repo api --path /data/projects/api # Custom path
+
+WHAT IT DOES:
+  1. Creates local directory with git init
+  2. Adds README.md with repo name
+  3. Creates GitHub repo (private by default)
+  4. Pushes initial commit
+  5. Adds to ru sync (unless --no-sync)
+EOF
+}
+
+# Defaults
+VISIBILITY="--private"
+ADD_TO_SYNC=true
+ORG="urgood2"
+REPO_PATH=""
+
+# Parse arguments
+REPO_NAME=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --public) VISIBILITY="--public"; shift ;;
+    --no-sync) ADD_TO_SYNC=false; shift ;;
+    --org) ORG="$2"; shift 2 ;;
+    --path) REPO_PATH="$2"; shift 2 ;;
+    -h|--help) show_help; exit 0 ;;
+    -*) die "Unknown option: $1" ;;
+    *) 
+      [[ -z "$REPO_NAME" ]] && REPO_NAME="$1" || die "Too many arguments"
+      shift ;;
+  esac
+done
+
+[[ -z "$REPO_NAME" ]] && { show_help; exit 1; }
+
+# Set default path if not specified
+[[ -z "$REPO_PATH" ]] && REPO_PATH="$HOME/repos/$REPO_NAME"
+
+FULL_NAME="$ORG/$REPO_NAME"
+
+note "Creating repository: $FULL_NAME"
+
+# Step 1: Create local directory
+if [[ -d "$REPO_PATH" ]]; then
+  die "Directory already exists: $REPO_PATH"
+fi
+
+mkdir -p "$REPO_PATH"
+cd "$REPO_PATH"
+success "Created directory: $REPO_PATH"
+
+# Step 2: Initialize git and create README
+git init -q
+echo "# $REPO_NAME" > README.md
+git add README.md
+git commit -q -m "Initial commit"
+success "Initialized git repository"
+
+# Step 3: Create GitHub repo and push
+note "Creating GitHub repository..."
+gh repo create "$FULL_NAME" $VISIBILITY --source=. --push
+success "Created and pushed to GitHub: $FULL_NAME"
+
+# Step 4: Add to ru sync
+if $ADD_TO_SYNC; then
+  note "Adding to ru sync..."
+  if command -v ru &>/dev/null; then
+    ru add "$FULL_NAME"
+    success "Added to ru sync"
+  else
+    echo "⚠️  ru not found, skipping sync setup"
+  fi
+fi
+
+echo ""
+echo "╭────────────────────────────────────────────────╮"
+echo "│ ✓ Repository created successfully!             │"
+echo "├────────────────────────────────────────────────┤"
+printf "│ %-46s │\n" "Name: $FULL_NAME"
+printf "│ %-46s │\n" "Path: $REPO_PATH"
+printf "│ %-46s │\n" "URL:  https://github.com/$FULL_NAME"
+echo "╰────────────────────────────────────────────────╯"
