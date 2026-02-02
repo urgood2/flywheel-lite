@@ -1,12 +1,11 @@
-#!/usr/bin/env bash
-# flywheel-polish: Iterative bead refinement ("Measure N Times")
+#\!/usr/bin/env bash
+# flywheel-polish: Interactive bead refinement ("Measure N Times, Implement Once")
+# Based on Doodlestein methodology - manual review after each round
 set -euo pipefail
 
-# Add common tool paths
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-MAX_ITERS=${1:-9}
-PLAN_FILE="${2:-planning/PLAN.md}"
+PLAN_FILE="${1:-planning/PLAN.md}"
 PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
@@ -15,115 +14,215 @@ RED="\033[0;31m"
 GREEN="\033[0;32m"
 YELLOW="\033[1;33m"
 BLUE="\033[0;34m"
+CYAN="\033[0;36m"
+BOLD="\033[1m"
 NC="\033[0m"
 
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}  FLYWHEEL POLISH - Iterative Bead Refinement${NC}"
-echo -e "${BLUE}  Max iterations: $MAX_ITERS | Plan: $PLAN_FILE${NC}"
-echo -e "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
+clear 2>/dev/null || true
+echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║  ${BOLD}FLYWHEEL POLISH${NC}${BLUE} - Interactive Bead Refinement                    ║${NC}"
+echo -e "${BLUE}║  \"Measure N times, implement once\"                                ║${NC}"
+echo -e "${BLUE}║  Project: $PROJECT_NAME${NC}"
+echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+echo
 
 # Check prerequisites
-if [[ ! -f "$PLAN_FILE" ]]; then
+if [[ \! -f "$PLAN_FILE" ]]; then
     echo -e "${RED}Error: Plan file not found: $PLAN_FILE${NC}"
-    echo -e "Create the plan first with: flywheel plan-pro or flywheel plan"
+    echo "Usage: flywheel polish [plan-file]"
+    echo "Default: planning/PLAN.md"
     exit 1
 fi
 
-if ! command -v br &> /dev/null && ! command -v bd &> /dev/null; then
-    echo -e "${RED}Error: br/bd (beads) not found in PATH${NC}"
-    echo -e "Install beads or add ~/.local/bin to PATH"
+# Check for beads tools
+BEADS_CMD=""
+if command -v br &> /dev/null; then
+    BEADS_CMD="br"
+elif command -v bd &> /dev/null; then
+    BEADS_CMD="bd"
+else
+    echo -e "${RED}Error: br/bd (beads) not found${NC}"
     exit 1
 fi
 
-# Prefer br over bd
-BEADS_CMD="br"
-command -v br &> /dev/null || BEADS_CMD="bd"
-
-# Count initial beads
-INITIAL_COUNT=0
-BEAD_OUTPUT="$($BEADS_CMD list 2>&1)" || true
-if echo "$BEAD_OUTPUT" | grep -q "id"; then
-    INITIAL_COUNT=$(echo "$BEAD_OUTPUT" | grep -c "id") || INITIAL_COUNT=0
+# Check for claude
+if \! command -v claude &> /dev/null; then
+    echo -e "${RED}Error: claude CLI not found${NC}"
+    exit 1
 fi
-echo -e "${YELLOW}Initial bead count: $INITIAL_COUNT${NC}"
+
+echo -e "${BOLD}📄 Plan file:${NC} $PLAN_FILE"
+echo -e "${BOLD}🔧 Beads tool:${NC} $BEADS_CMD"
 echo
 
-if [[ "$INITIAL_COUNT" -lt 1 ]]; then
-    echo -e "${YELLOW}No beads found. Run 'flywheel beads' first to create beads from plan.${NC}"
-    echo -e "Or continue anyway to create beads during polish iterations."
-    read -p "Continue anyway? [y/N] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
+# Count beads
+BEAD_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+echo -e "${YELLOW}Current bead count: $BEAD_COUNT${NC}"
+
+if [[ "$BEAD_COUNT" -lt 1 ]]; then
+    echo -e "${RED}No beads found. Run 'flywheel beads' first.${NC}"
+    exit 1
 fi
 
-# Create tmux session for polish
-SESSION="polish-$PROJECT_NAME"
-
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-    echo -e "${YELLOW}Existing polish session found.${NC}"
-    echo "  Attach: tmux attach -t $SESSION"
-    echo "  Kill:   tmux kill-session -t $SESSION"
-    read -p "Attach to existing session? [Y/n] " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        tmux attach -t "$SESSION"
-        exit 0
-    fi
-    tmux kill-session -t "$SESSION"
-fi
-
-echo -e "${GREEN}Creating polish session: $SESSION${NC}"
-echo -e "Iterations: $MAX_ITERS"
 echo
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo -e "${CYAN}  HOW THIS WORKS (Doodlestein Method)${NC}"
+echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo
+echo "  1. Run polish prompt in Claude Code"
+echo "  2. Review output - are improvements still happening?"
+echo "  3. Choose: [C]ontinue / [F]resh session / [X]Codex final / [D]one"
+echo "  4. Repeat 6-9 times until steady state"
+echo "  5. Final pass with Codex (different model = fresh perspective)"
+echo
+read -p "Press Enter to start first iteration..."
 
-# Save prompt to temp file for tmux
-PROMPT_FILE="/tmp/polish_prompt_$$.txt"
-cat > "$PROMPT_FILE" << PROMPTEOF
-Reread AGENTS.md so it is still fresh in your mind. Then read ALL of $PLAN_FILE.
+# The main polish prompt
+POLISH_PROMPT="Reread AGENTS.md so it is still fresh in your mind. Then read ALL of $PLAN_FILE. Use ultrathink. Check over each bead super carefully-- are you sure it makes sense? Is it optimal? Could we change anything to make the system work better for users? If so, revise the beads. It is a lot easier and faster to operate in plan space before we start implementing these things\!
 
-Use ultrathink. Check over each bead super carefully-- are you sure it makes sense? Is it optimal? Could we change anything to make the system work better for users? If so, revise the beads. It is a lot easier and faster to operate in plan space before we start implementing these things!
-
-DO NOT OVERSIMPLIFY THINGS! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY!
+DO NOT OVERSIMPLIFY THINGS\! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY\!
 
 Also make sure that as part of the beads we include comprehensive unit tests and e2e test scripts with great, detailed logging so we can be sure that everything is working perfectly after implementation. It is critical that EVERYTHING from the markdown plan be embedded into the beads so that we never need to refer back to the markdown plan and we do not lose any important context or ideas or insights into the new features planned and why we are making them.
 
-Remember to ONLY use the bd/br tool to create and modify the beads and add the dependencies.
-PROMPTEOF
+Remember to ONLY use the $BEADS_CMD tool to create and modify the beads and add the dependencies."
 
-# Create session
-tmux new-session -d -s "$SESSION" -c "$PROJECT_DIR"
+# Fresh context prompt (for new session after flatline)
+FRESH_CONTEXT_PROMPT="First read ALL of the AGENTS.md file and README.md file super carefully and understand ALL of both\! Then use your code investigation agent mode to fully understand the code, and technical architecture and purpose of the project. Use ultrathink."
 
-# Send initial message
-tmux send-keys -t "$SESSION" "echo '=== FLYWHEEL POLISH - $MAX_ITERS iterations ===' && echo 'Plan: $PLAN_FILE' && sleep 2" Enter
+FRESH_FOLLOWUP_PROMPT="We recently transformed a markdown plan file into a bunch of new beads. I want you to very carefully review and analyze these using $BEADS_CMD and bv.
 
-# For each iteration, send the claude command
-for i in $(seq 1 $MAX_ITERS); do
-    tmux send-keys -t "$SESSION" "echo '' && echo '════════════════════════════════════════════════════════════' && echo '  POLISH ITERATION $i/$MAX_ITERS' && echo '════════════════════════════════════════════════════════════'" Enter
+$POLISH_PROMPT"
+
+round=0
+session_num=1
+
+while true; do
+    ((round++))
     
-    # Send claude command
-    tmux send-keys -t "$SESSION" "claude --dangerously-skip-permissions -p \"$(cat $PROMPT_FILE)\"" Enter
+    echo
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  ITERATION $round (Session $session_num)${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo
     
-    # Wait between iterations
-    tmux send-keys -t "$SESSION" "echo '>>> Iteration $i complete. Waiting 5s...' && sleep 5" Enter
+    # Show bead count before
+    BEFORE_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+    echo -e "${YELLOW}Beads before: $BEFORE_COUNT${NC}"
+    echo
+    
+    echo -e "${BOLD}Running Claude Code...${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    
+    # Run claude with the polish prompt
+    echo "$POLISH_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_round_${round}.log"
+    
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    echo
+    
+    # Show bead count after
+    AFTER_COUNT=$($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "0")
+    echo -e "${YELLOW}Beads after: $AFTER_COUNT${NC}"
+    
+    if [[ "$AFTER_COUNT" -ne "$BEFORE_COUNT" ]]; then
+        echo -e "${GREEN}Change: $((AFTER_COUNT - BEFORE_COUNT)) beads${NC}"
+    else
+        echo -e "${YELLOW}No change in bead count (may have modified existing beads)${NC}"
+    fi
+    echo
+    
+    # Decision point
+    echo -e "${BOLD}────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "Completed iteration $round."
+    echo
+    echo "  [C] Continue - improvements still happening (same session)"
+    echo "  [F] Fresh session - flatlined, need fresh context"
+    echo "  [X] Codex final - ready for final pass with different model"
+    echo "  [D] Done - beads are polished enough"
+    echo
+    read -p "Choice [C/F/X/D]: " -n 1 -r
+    echo
+    
+    case "${REPLY^^}" in
+        C)
+            echo -e "${GREEN}Continuing in same session...${NC}"
+            ;;
+        F)
+            echo
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${CYAN}  FRESH CONTEXT RESET${NC}"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo
+            echo -e "${BOLD}Step 1: Loading fresh context...${NC}"
+            echo
+            
+            # Run fresh context prompt
+            echo "$FRESH_CONTEXT_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_fresh_${session_num}.log"
+            
+            echo
+            echo -e "${BOLD}Step 2: Re-analyzing beads with fresh eyes...${NC}"
+            echo
+            
+            # Run followup prompt
+            echo "$FRESH_FOLLOWUP_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee -a "/tmp/polish_fresh_${session_num}.log"
+            
+            ((session_num++))
+            echo -e "${GREEN}Fresh session complete. Now on session $session_num.${NC}"
+            ;;
+        X)
+            echo
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo -e "${CYAN}  FINAL PASS WITH CODEX${NC}"
+            echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+            echo
+            
+            if command -v codex &> /dev/null; then
+                echo -e "${BOLD}Running Codex with high reasoning effort...${NC}"
+                echo
+                # Note: codex CLI syntax may vary
+                echo "$POLISH_PROMPT" | codex --reasoning high 2>&1 | tee "/tmp/polish_codex_final.log" || {
+                    echo -e "${YELLOW}Codex command failed. Try manually:${NC}"
+                    echo "  codex --reasoning high"
+                    echo "  Then paste the polish prompt"
+                }
+            else
+                echo -e "${YELLOW}Codex CLI not found. Run manually:${NC}"
+                echo
+                echo "  1. Open Codex or use OpenAI API"
+                echo "  2. Set reasoning effort to HIGH"
+                echo "  3. Run this prompt:"
+                echo
+                echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+                echo "$POLISH_PROMPT"
+                echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+                echo
+                read -p "Press Enter when Codex pass is complete..."
+            fi
+            
+            echo
+            echo -e "${GREEN}Codex final pass complete\!${NC}"
+            break
+            ;;
+        D|*)
+            echo -e "${GREEN}Polish complete after $round iterations.${NC}"
+            break
+            ;;
+    esac
 done
 
 # Final summary
-tmux send-keys -t "$SESSION" "echo '' && echo '=== ALL POLISH ITERATIONS COMPLETE ===' && $BEADS_CMD list 2>/dev/null | head -30" Enter
-
-# Cleanup
-rm -f "$PROMPT_FILE"
-
-echo -e "${GREEN}Polish session created: $SESSION${NC}"
 echo
-echo -e "Commands:"
-echo -e "  Attach:  tmux attach -t $SESSION"
-echo -e "  Detach:  Ctrl+B D (inside tmux)"
-echo -e "  Kill:    tmux kill-session -t $SESSION"
+echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${GREEN}║  ${BOLD}POLISH COMPLETE${NC}${GREEN}                                                   ║${NC}"
+echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
-read -p "Attach now? [Y/n] " -n 1 -r
+echo -e "${BOLD}Summary:${NC}"
+echo "  Iterations: $round"
+echo "  Sessions: $session_num"
+echo "  Final bead count: $($BEADS_CMD list 2>/dev/null | grep -c "id" || echo "?")"
 echo
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    tmux attach -t "$SESSION"
-fi
+echo -e "${BOLD}Logs saved to:${NC}"
+ls -la /tmp/polish_*.log 2>/dev/null | tail -5
+echo
+echo -e "${BOLD}Next step:${NC}"
+echo "  flywheel startwork --cc 2    # Start agent swarm to implement"
+echo
