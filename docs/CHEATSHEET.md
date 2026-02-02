@@ -654,3 +654,30 @@ cd ~/projects/TheGameJamTemplate@feature-awesome
 - **Worktrees** manage which **branches** you have checked out (shares .git)
 - RU's `@branch` syntax doesn't support branches with `/` in the name
 - Use `wt` commands for branch-based work, `ru` for repo-based work
+
+---
+
+## REPO MANAGEMENT
+
+### Creating New Repositories
+```bash
+new-repo my-project                    # Private repo in ~/repos/my-project
+new-repo my-tool --public              # Public repo
+new-repo work-proj --org mycompany     # In organization
+new-repo api --path /data/projects/api # Custom path
+```
+
+The `new-repo` command:
+1. Creates local directory with git init
+2. Adds README.md
+3. Creates GitHub repo (private by default)
+4. Pushes initial commit
+5. Adds to `ru sync`
+
+### Syncing Repositories
+```bash
+ru sync                                # Sync all configured repos
+ru status                              # Check repo status
+ru add owner/repo                      # Add repo to sync list
+ru list                                # Show configured repos
+```
