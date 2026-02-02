@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# wt - Git Worktree Manager
+# Usage: wt <command> [args]
+#
+# Commands:
+#   add <branch>      Create worktree for branch (auto-names folder)
+#   list              List all worktrees
+#   remove <branch>   Remove worktree for branch
+#   cd <branch>       Print path to worktree (use: cd $(wt cd branch))
+#   sync              Fetch and update all worktrees
+#
+# Examples:
+#   wt add urgood2/flag
+#   wt add roguelike-1
+#   cd $(wt cd urgood2/flag)
+
+set -e
+
+# Get repo root
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "Error: Not in a git repository"
+    exit 1
+}
+REPO_NAME=$(basename "$REPO_ROOT")
+WORKTREES_BASE=$(dirname "$REPO_ROOT")
+
+# Sanitize branch name for folder (replace / with -)
+sanitize_branch() {
+    echo "$1" | tr "/" "-"
+}
+
+# Create ntm-compatible symlink (replace @ with -)
+create_ntm_symlink() {
+    local worktree_path="$1"
+    local symlink_path
+    symlink_path=$(echo "$worktree_path" | tr "@" "-")
+    
+    if [[ "$symlink_path" != "$worktree_path" ]]; then
+        ln -sf "$worktree_path" "$symlink_path"
+        echo "Created ntm symlink: $symlink_path"
+    fi
+}
+
+# Remove ntm-compatible symlink
+remove_ntm_symlink() {
+    local worktree_path="$1"
+    local symlink_path
+    symlink_path=$(echo "$worktree_path" | tr "@" "-")
+    
+    if [[ "$symlink_path" != "$worktree_path" && -L "$symlink_path" ]]; then
+        rm "$symlink_path"
+        echo "Removed ntm symlink: $symlink_path"
+    fi
+}
+
+cmd_add() {
+    local branch="$1"
+    if [[ -z "$branch" ]]; then
+        echo "Usage: wt add <branch>"
+        exit 1
+    fi
+
+    local folder_name="${REPO_NAME}@$(sanitize_branch "$branch")"
+    local worktree_path="${WORKTREES_BASE}/${folder_name}"
+
+    # Check if branch exists remotely
+    if ! git ls-remote --heads origin "$branch" | grep -q .; then
+        echo "Branch '$branch' not found on remote"
+        echo "Create it? [y/N] "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            git fetch origin
+            git worktree add -b "$branch" "$worktree_path"
+        else
+            exit 1
+        fi
+    else
+        git fetch origin "$branch"
+        git worktree add "$worktree_path" "$branch"
+    fi
+
+    # Create ntm-compatible symlink
+    create_ntm_symlink "$worktree_path"
+
+    echo ""
+    echo "Created worktree: $worktree_path"
+    echo "To enter: cd \"$worktree_path\""
+}
+
+cmd_list() {
+    echo "Worktrees for $REPO_NAME:"
+    echo "─────────────────────────"
+    git worktree list
+}
+
+cmd_remove() {
+    local branch="$1"
+    if [[ -z "$branch" ]]; then
+        echo "Usage: wt remove <branch>"
+        exit 1
+    fi
+
+    local folder_name="${REPO_NAME}@$(sanitize_branch "$branch")"
+    local worktree_path="${WORKTREES_BASE}/${folder_name}"
+
+    if [[ -d "$worktree_path" ]]; then
+        # Remove ntm symlink first
+        remove_ntm_symlink "$worktree_path"
+        git worktree remove "$worktree_path"
+        echo "Removed worktree: $worktree_path"
+    else
+        echo "Worktree not found: $worktree_path"
+        exit 1
+    fi
+}
+
+cmd_cd() {
+    local branch="$1"
+    if [[ -z "$branch" ]]; then
+        echo "Usage: wt cd <branch>"
+        exit 1
+    fi
+
+    local folder_name="${REPO_NAME}@$(sanitize_branch "$branch")"
+    local worktree_path="${WORKTREES_BASE}/${folder_name}"
+
+    if [[ -d "$worktree_path" ]]; then
+        echo "$worktree_path"
+    else
+        echo "Worktree not found: $worktree_path" >&2
+        exit 1
+    fi
+}
+
+cmd_sync() {
+    echo "Syncing worktrees for $REPO_NAME..."
+    git fetch --all --prune
+
+    git worktree list --porcelain | grep "^worktree " | cut -d" " -f2- | while read -r wt_path; do
+        if [[ -d "$wt_path" ]]; then
+            echo ""
+            echo "→ $wt_path"
+            (cd "$wt_path" && git pull --ff-only 2>&1 || echo "  (has local changes or conflicts)")
+        fi
+    done
+    echo ""
+    echo "Done."
+}
+
+cmd_help() {
+    echo "wt - Git Worktree Manager"
+    echo ""
+    echo "Usage: wt <command> [args]"
+    echo ""
+    echo "Commands:"
+    echo "  add <branch>      Create worktree for branch"
+    echo "  list              List all worktrees"
+    echo "  remove <branch>   Remove worktree"
+    echo "  cd <branch>       Print worktree path"
+    echo "  sync              Fetch and update all worktrees"
+    echo ""
+    echo "Examples:"
+    echo "  wt add urgood2/flag"
+    echo "  wt add roguelike-1"
+    echo "  cd \$(wt cd urgood2/flag)"
+    echo ""
+    echo "Note: Auto-creates ntm-compatible symlinks (@ -> -)"
+}
+
+case "${1:-help}" in
+    add)    cmd_add "$2" ;;
+    list|ls) cmd_list ;;
+    remove|rm) cmd_remove "$2" ;;
+    cd)     cmd_cd "$2" ;;
+    sync)   cmd_sync ;;
+    help|--help|-h) cmd_help ;;
+    *)      echo "Unknown command: $1"; cmd_help; exit 1 ;;
+esac
