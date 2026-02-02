@@ -355,21 +355,20 @@ make_beads() {
     return 0
   fi
 
-  local prompt="You are a task decomposition expert. Read ${plan} and create Beads tasks.
+  local prompt="OK so now read ALL of ${plan}; please take ALL of that and elaborate on it and use it to create a comprehensive and granular set of beads for all this with tasks, subtasks, and dependency structure overlaid, with detailed comments so the whole thing is totally self-contained and self-documenting (including relevant background, reasoning/justification, considerations, etc.-- anything we would want our future self to know about the goals and intentions and thought process and how it serves the over-arching goals of the project.).
 
-RULES:
-1. Create an EPIC first for the main feature
-2. Create ${min_beads}+ sub-tasks with clear acceptance criteria
-3. Use priorities: P1 (critical path), P2 (important), P3 (polish)
-4. Set dependencies between tasks using --parent
+The beads should be so detailed that we never need to consult back to the original markdown plan document.
 
-COMMANDS:
-- br add -t epic -p P1 'Epic Title' 'Epic description'
-- br add -t task -p P1 'Task Title' 'Detailed acceptance criteria'
+Remember to ONLY use the bd/br tool to create and modify the beads and add the dependencies.
+
+Use these commands:
+- br add -t epic -p P1 'Epic Title' 'Epic description with full context'
+- br add -t task -p P1 'Task Title' 'Detailed acceptance criteria and context'
 - br update <id> --parent <epic-id>
+- br dep add <id> --blocked-by <other-id>
 
-After creating all tasks, run: bv --robot-triage
-Then say BEADS_COMPLETE when done."
+Create at least ${min_beads} beads. When done, run: bv --robot-triage
+Then say BEADS_COMPLETE."
 
   note "Starting beads session: $session"
   note "Detach anytime with: Ctrl+B D"

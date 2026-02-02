@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
 # flywheel-plan-pro: Guided planning with GPT Pro web integration
+# Interactive mode - choose to continue after each round
 set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 PLANNING_DIR="$PROJECT_DIR/planning"
-ROUNDS=${1:-3}
 
 # Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+RED="\033[0;31m"
+GREEN="\033[0;32m"
+YELLOW="\033[1;33m"
+BLUE="\033[0;34m"
+CYAN="\033[0;36m"
+BOLD="\033[1m"
+NC="\033[0m"
 
 # Create planning directory
 mkdir -p "$PLANNING_DIR"
@@ -23,7 +25,7 @@ clear 2>/dev/null || true
 echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║  ${BOLD}FLYWHEEL PLAN-PRO${NC}${BLUE} - Guided Planning with GPT Pro Integration   ║${NC}"
 echo -e "${BLUE}║  Project: $PROJECT_NAME${NC}"
-echo -e "${BLUE}║  Rounds: $ROUNDS (GPT Pro → Claude Code iterations)${NC}"
+echo -e "${BLUE}║  Mode: Interactive (continue/stop after each round)${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
 
@@ -31,7 +33,7 @@ echo
 # STEP 1: Initial Plan
 # ============================================================================
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${CYAN}  STEP 1: Initial Plan Creation${NC}"
+echo -e "${CYAN}  STEP 1: Initial Plan${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo
 
@@ -55,14 +57,17 @@ else
 fi
 
 CURRENT_PLAN="$PLANNING_DIR/PLAN_v0.md"
-echo
+round=0
 
 # ============================================================================
-# STEP 2-N: GPT Pro Refinement Rounds
+# Interactive Refinement Loop
 # ============================================================================
-for round in $(seq 1 $ROUNDS); do
+while true; do
+    ((round++))
+    
+    echo
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}  ROUND $round/$ROUNDS: GPT Pro Review${NC}"
+    echo -e "${CYAN}  ROUND $round: GPT Pro Review${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
     
@@ -71,7 +76,7 @@ for round in $(seq 1 $ROUNDS); do
     echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
     echo
     
-    # Try to copy plan to clipboard (graceful failure)
+    # Try to copy plan to clipboard
     if command -v pbcopy &> /dev/null; then
         cat "$CURRENT_PLAN" | pbcopy 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
     elif command -v xclip &> /dev/null && [[ -n "${DISPLAY:-}" ]]; then
@@ -79,7 +84,6 @@ for round in $(seq 1 $ROUNDS); do
     else
         echo -e "${YELLOW}📋 Copy the plan manually:${NC}"
         echo -e "   cat $CURRENT_PLAN"
-        echo
     fi
     echo
     
@@ -114,40 +118,35 @@ PROMPT
     echo -e "   Lines: $(wc -l < "$GPT_OUTPUT_FILE")"
     echo
     
-    # Now integrate with Claude Code
+    # Integration phase
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${CYAN}  ROUND $round/$ROUNDS: Claude Code Integration${NC}"
+    echo -e "${CYAN}  ROUND $round: Claude Code Integration${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
     
-    NEW_PLAN="$PLANNING_DIR/PLAN_v$round.md"
+    NEW_PLAN="$PLANNING_DIR/PLAN_v${round}.md"
     
-    # Show integration prompt
     echo -e "${BOLD}Running Claude Code to integrate revisions...${NC}"
     echo -e "Creating: $NEW_PLAN"
     echo
     
-    # Create the integration prompt file
-    INTEGRATE_PROMPT_FILE="$PLANNING_DIR/.integrate_prompt_$round.txt"
-    cat > "$INTEGRATE_PROMPT_FILE" << INTEGRATEPROMPT
-Read the current plan at $CURRENT_PLAN and integrate the following GPT Pro revisions.
+    # Create integration prompt
+    INTEGRATE_PROMPT="Read the current plan at $CURRENT_PLAN and integrate the following GPT Pro revisions.
 Save the integrated plan as $NEW_PLAN.
 
-Be meticulous. At the end, tell me which changes you wholeheartedly agree with, 
+Use ultrathink. Be meticulous. At the end, tell me which changes you wholeheartedly agree with, 
 which you somewhat agree with, and which you disagree with.
 
 GPT Pro's revisions:
 
-$(cat "$GPT_OUTPUT_FILE")
-INTEGRATEPROMPT
+$(cat "$GPT_OUTPUT_FILE")"
 
     # Run Claude Code
     if command -v claude &> /dev/null; then
-        claude --dangerously-skip-permissions -p "$(cat "$INTEGRATE_PROMPT_FILE")" 2>&1 | tee "$PLANNING_DIR/integration_round${round}.log"
+        echo "$INTEGRATE_PROMPT" | claude --dangerously-skip-permissions 2>&1 | tee "$PLANNING_DIR/integration_round${round}.log"
     else
         echo -e "${RED}Error: claude command not found${NC}"
-        echo -e "Please run this manually:"
-        echo -e "  claude -p '$(head -5 "$INTEGRATE_PROMPT_FILE")...'"
+        echo "Please integrate manually"
     fi
     
     # Check if new plan was created
@@ -156,32 +155,39 @@ INTEGRATEPROMPT
         echo -e "${GREEN}✓ Created: $NEW_PLAN${NC}"
         echo -e "   Lines: $(wc -l < "$NEW_PLAN")"
         CURRENT_PLAN="$NEW_PLAN"
-    else
-        echo -e "${YELLOW}⚠ New plan not auto-created. Claude may have written to a different path.${NC}"
-        echo -e "Check the output above and manually copy if needed."
-        read -p "Press Enter to continue..."
         
-        # Check again after user interaction
-        if [[ -f "$NEW_PLAN" ]]; then
-            CURRENT_PLAN="$NEW_PLAN"
+        # Show diff
+        if [[ $round -gt 1 ]]; then
+            PREV_PLAN="$PLANNING_DIR/PLAN_v$((round-1)).md"
+            if [[ -f "$PREV_PLAN" ]]; then
+                echo
+                echo -e "${BOLD}Changes from v$((round-1)) to v$round:${NC}"
+                diff --stat "$PREV_PLAN" "$NEW_PLAN" 2>/dev/null || true
+            fi
         fi
+    else
+        echo -e "${YELLOW}⚠ Plan file not auto-created. Check output above.${NC}"
+        read -p "Press Enter after manually creating $NEW_PLAN (or Ctrl+C to stop)..."
+        [[ -f "$NEW_PLAN" ]] && CURRENT_PLAN="$NEW_PLAN"
     fi
-    echo
     
-    # Show diff if possible
-    if [[ $round -gt 1 ]]; then
-        PREV_PLAN="$PLANNING_DIR/PLAN_v$((round-1)).md"
-        if [[ -f "$PREV_PLAN" ]] && [[ -f "$NEW_PLAN" ]]; then
-            echo -e "${BOLD}Changes from v$((round-1)) to v$round:${NC}"
-            diff --stat "$PREV_PLAN" "$NEW_PLAN" 2>/dev/null || true
-        fi
-    fi
+    # Ask to continue
     echo
+    echo -e "${BOLD}────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "Completed $round round(s) of refinement."
+    echo -e "Current plan: $CURRENT_PLAN ($(wc -l < "$CURRENT_PLAN") lines)"
+    echo
+    read -p "Continue to another round? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        break
+    fi
 done
 
 # ============================================================================
 # FINAL: Summary and Next Steps
 # ============================================================================
+echo
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  ${BOLD}PLAN REFINEMENT COMPLETE${NC}${GREEN}                                        ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
@@ -201,7 +207,7 @@ echo -e "${GREEN}✓ Copied to: $PLANNING_DIR/PLAN.md${NC}"
 echo
 
 echo -e "${BOLD}Next Steps:${NC}"
-echo "  1. flywheel beads --min-beads 50    # Convert plan to beads"
-echo "  2. flywheel polish --max 9          # Polish beads (6-9 iterations)"
-echo "  3. flywheel startwork --cc 2        # Start agent swarm"
+echo "  1. flywheel beads              # Convert plan to beads (uses Doodlestein prompt)"
+echo "  2. flywheel polish --max 9     # Polish beads (6-9 iterations)"
+echo "  3. flywheel startwork --cc 2   # Start agent swarm"
 echo
