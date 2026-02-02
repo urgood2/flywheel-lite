@@ -99,7 +99,11 @@ in terms of better architecture, new features, changed features, etc. to make
 it better, more robust/reliable, more performant, more compelling/useful, etc. 
 For each proposed change, give me your detailed analysis and rationale/justification 
 for why it would make the project better along with the git-diff style change 
-versus the original plan shown below:
+versus the original plan shown below.
+
+At the end of your response, provide a COMPLETE REVISED PLAN as a downloadable
+markdown file that incorporates all your approved changes. This should be a
+standalone document I can save directly.
 PROMPT
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
     echo
