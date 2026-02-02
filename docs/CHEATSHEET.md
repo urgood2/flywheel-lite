@@ -633,6 +633,8 @@ wt remove urgood2/roguelike-1
 
 Branch names with `/` are sanitized: `urgood2/flag` becomes `urgood2-flag`
 
+**ntm Symlinks:** `wt add` auto-creates symlinks mapping `@` to `-` (e.g., `repo@branch` → `repo-branch`) so flywheel/ntm can find worktrees without path issues.
+
 ### Workflow: Start Feature on VPS, Continue on Laptop
 
 ```bash
