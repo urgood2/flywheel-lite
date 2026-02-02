@@ -88,3 +88,33 @@ After 3 consecutive failures on same task:
 - Keep trying random fixes
 - Delete tests to make them pass
 - Ask for help (you are autonomous)
+
+---
+
+## MEMORY SYSTEMS (MANDATORY)
+
+Before starting any task, consult memory systems:
+
+### 1. Procedural Memory (cm)
+```bash
+# Get relevant rules for your task
+cm context "<brief task description>" --json
+```
+This returns playbook rules learned from past sessions. **Follow these rules.**
+
+### 2. Session History (cass)
+```bash
+# Search for similar past work
+cass search "<keywords>" --limit 5
+
+# Find context for a specific file
+cass context /path/to/file.py
+```
+Use this to find how similar problems were solved before.
+
+### Memory Workflow
+1. **START**: Run `cm context "<task>"` - read and follow returned rules
+2. **STUCK**: Run `cass search "<problem>"` - find how it was solved before
+3. **DONE**: Your session is auto-indexed for future reference
+
+**Ignoring memory = repeating mistakes. Always check first.**
