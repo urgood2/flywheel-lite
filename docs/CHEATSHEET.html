@@ -172,6 +172,9 @@ ntm attach my-feature</pre>
     <tr><td><code>flywheel jobs</code></td><td>List tmux sessions</td></tr>
     <tr><td><code>flywheel attach [session]</code></td><td>Attach to session</td></tr>
     <tr><td><code>flywheel doctor</code></td><td>Check dependencies</td></tr>
+    <tr><td><code>flywheel finalize [--push]</code></td><td>Commit beads, optionally push</td></tr>
+    <tr><td><code>flywheel sync</code></td><td>Full finalize + push to remote</td></tr>
+    <tr><td><code>flywheel qa</code></td><td>Spawn QA agent to verify codebase</td></tr>
 </table>
 
 <!-- PLAN-PRO -->
@@ -322,6 +325,27 @@ ntm send my-game --pane=2 "Task"    # Specific</pre>
     <tr><td><code>.beads/</code></td><td>Beads database</td></tr>
     <tr><td><code>/tmp/polish_*.log</code></td><td>Polish logs</td></tr>
 </table>
+
+<!-- FINALIZATION -->
+<h2>Finalization & QA</h2>
+<div class="grid">
+<div class="card">
+<h3>QA Check</h3>
+<pre>flywheel qa    # Spawns Opus QA agent</pre>
+<p>Runs: build, tests, UBS scan, bead check, writes QA_REPORT.md</p>
+</div>
+<div class="card">
+<h3>Finalize</h3>
+<pre>flywheel finalize          # Sync beads, commit
+flywheel finalize --push   # Also push
+flywheel sync              # Shortcut for above</pre>
+</div>
+<div class="card">
+<h3>End-of-Session</h3>
+<pre>flywheel qa                # Verify
+flywheel sync              # Commit + push</pre>
+</div>
+</div>
 
 <!-- TROUBLESHOOTING -->
 <h2>Troubleshooting</h2>

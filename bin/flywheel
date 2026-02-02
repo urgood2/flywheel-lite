@@ -76,6 +76,9 @@ Usage:
   flywheel attach [session]                    # Attach to refine/beads session
   flywheel plan-pro [--rounds N]        # GPT Pro guided planning (manual steps)
   flywheel polish [--max N]              # Iterative bead refinement (6-9x)
+  flywheel finalize [--push]            # Commit beads, optionally push
+  flywheel sync                         # Full finalize + push
+  flywheel qa                           # Spawn QA agent to verify codebase
   flywheel jobs                                # List all sessions
 
 Refine runs in a persistent tmux session. Detach with Ctrl+B D, reattach with:
@@ -611,6 +614,9 @@ main() {
     status) show_status;;
     jobs) list_jobs;;
     attach) attach_session "${1:-}";;
+    finalize) finalize_work "";;
+    sync) sync_to_remote;;
+    qa) run_qa;;
     nudge) nudge_agents "$@";;
     ""|-h|--help|help) usage;;
     *) usage; die "Unknown: $cmd";;
@@ -652,3 +658,115 @@ compete_plans() {
 
 
 main "$@"
+
+
+# ============================================================================
+# FINALIZATION & QA
+# ============================================================================
+
+finalize_work() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local do_push=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in --push) do_push=true; shift;; *) die "Unknown: $1";; esac
+  done
+  cd "$root"
+
+  note "=== Finalization Checklist ==="
+
+  # 1. Show work status
+  note "1. Checking open beads..."
+  local in_progress
+  in_progress=$(br list --status=in_progress 2>/dev/null | grep -c "id" 2>/dev/null) || in_progress=0
+  [[ "$in_progress" -gt 0 ]] && note "   ⚠️  $in_progress beads still in_progress" || note "   ✅ No beads in_progress"
+
+  # 2. Run UBS if available
+  if command -v ubs >/dev/null 2>&1; then
+    note "2. Running UBS scan..."
+    ubs . 2>/dev/null || note "   ⚠️  UBS found issues (review output)"
+  else
+    note "2. Skipping UBS (not installed)"
+  fi
+
+  # 3. Sync beads
+  note "3. Syncing beads..."
+  br sync --flush-only 2>/dev/null || true
+  git add .beads/ 2>/dev/null || true
+
+  # 4. Stage and commit
+  note "4. Staging changes..."
+  git add -A
+  if ! git diff --cached --quiet; then
+    note "   Committing..."
+    git commit -m "Flywheel checkpoint: $(date +%Y-%m-%d\ %H:%M)" || true
+  else
+    note "   Nothing to commit"
+  fi
+
+  # 5. Push if requested
+  if [[ "$do_push" == true ]]; then
+    note "5. Pushing to remote..."
+    git pull --rebase || die "Pull failed - resolve conflicts first"
+    git push || die "Push failed"
+    note "   ✅ Pushed successfully"
+  else
+    note "5. Skipping push (use --push or 'flywheel sync')"
+  fi
+
+  # 6. Final status
+  note "6. Final status:"
+  git status --short
+}
+
+sync_to_remote() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  cd "$root"
+  note "=== Full Sync ==="
+  finalize_work --push
+}
+
+run_qa() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local project; project="$(basename "$root")"
+  local session="${project}-qa"
+  cd "$root"
+
+  note "Spawning QA agent (Opus) in session: $session"
+
+  # Kill existing QA session if exists
+  tmux kill-session -t "$session" 2>/dev/null || true
+
+  # Load QA prompt from prompts dir or use default
+  local prompt_file="$HOME/.config/flywheel/prompts/QA_AGENT.md"
+  [[ -f "$prompt_file" ]] || prompt_file="/data/projects/flywheel-lite/prompts/QA_AGENT.md"
+  
+  local qa_prompt
+  if [[ -f "$prompt_file" ]]; then
+    qa_prompt="$(cat "$prompt_file")"
+  else
+    qa_prompt="You are a QA AGENT. Verify this codebase is ready for sync.
+
+1. Check project: ls -la && cat Justfile 2>/dev/null | head -30
+2. Build: just build-release || cargo build --release || echo \"No build\"
+3. Run tests: just test || cargo test || npm test || echo \"No tests\"
+4. Bug scan: ubs . 2>&1 | tail -30
+5. Bead status: br list --status=open | head -15
+6. For failures, create beads: br create \"Fix: <desc>\" -t bug -p 1
+7. Write planning/QA_REPORT.md with verdict
+8. Output: QA COMPLETE - [READY TO SYNC | NEEDS FIXES]
+
+START NOW."
+  fi
+
+  # Create tmux session
+  tmux new-session -d -s "$session" -c "$root"
+  sleep 1
+  tmux send-keys -t "$session" "claude --dangerously-skip-permissions" Enter
+  sleep 3
+  tmux send-keys -t "$session" "$qa_prompt" Enter
+
+  note "QA session started: $session"
+  note "Attach with: tmux attach -t $session"
+  sleep 1
+  tmux attach -t "$session"
+}

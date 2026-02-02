@@ -397,3 +397,48 @@ See: `/data/projects/flywheel-lite/prompts/DOODLESTEIN_PROMPTS.md`
 | Plan → Beads | Claude Code (Opus) | Needs bd/br tools |
 | Bead polish | Claude Code (Opus) | Needs bd/br tools |
 | Final polish | Codex (high reasoning) | Fresh perspective |
+
+---
+
+## FINALIZATION & QA
+
+### QA Check (Before Sync)
+```bash
+flywheel qa                      # Spawns Opus agent to run QA checklist
+```
+
+The QA agent will:
+1. Check project structure
+2. Run build
+3. Run tests
+4. Run UBS bug scan
+5. Check bead status
+6. Create beads for any issues found
+7. Write `planning/QA_REPORT.md`
+8. Output verdict: READY TO SYNC or NEEDS FIXES
+
+### Finalize Work
+```bash
+flywheel finalize                # Sync beads, commit changes
+flywheel finalize --push         # Also push to remote
+```
+
+Finalization checklist:
+1. Check for in-progress beads
+2. Run UBS scan (if available)
+3. Sync beads (`br sync --flush-only`)
+4. Stage and commit all changes
+5. Push (if --push flag)
+
+### Full Sync
+```bash
+flywheel sync                    # Shortcut for finalize --push
+```
+
+### Recommended End-of-Session Flow
+```bash
+flywheel qa                      # Verify everything works
+# Review QA_REPORT.md
+flywheel finalize --push         # Commit and push
+# Or: flywheel sync
+```
