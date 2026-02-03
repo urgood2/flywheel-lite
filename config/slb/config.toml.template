@@ -1,0 +1,81 @@
+# SLB Configuration
+# See https://github.com/Dicklesworthstone/slb for documentation.
+#
+# Precedence: defaults < user (~/.slb/config.toml) < project (.slb/config.toml) < env (SLB_*) < flags
+
+[general]
+  min_approvals = 2
+  require_different_model = false
+  different_model_timeout = 300
+  conflict_resolution = "any_rejection_blocks"
+  request_timeout = 1800
+  approval_ttl_minutes = 30
+  approval_ttl_critical_minutes = 10
+  timeout_action = "escalate"
+  enable_dry_run = true
+  enable_rollback_capture = true
+  max_rollback_size_mb = 100
+  cross_project_reviews = false
+  review_pool = []
+
+[daemon]
+  use_file_watcher = true
+  ipc_socket = ""
+  tcp_addr = ""
+  tcp_require_auth = true
+  tcp_allowed_ips = []
+  log_level = "info"
+  pid_file = ""
+
+[rate_limits]
+  max_pending_per_session = 5
+  max_requests_per_minute = 10
+  rate_limit_action = "reject"
+
+[notifications]
+  desktop_enabled = true
+  desktop_delay_seconds = 60
+  webhook_url = ""
+  email_enabled = false
+
+[history]
+  database_path = ""
+  git_repo_path = ""
+  retention_days = 365
+  auto_git_commit = true
+
+[patterns]
+  [patterns.critical]
+    min_approvals = 2
+    dynamic_quorum = false
+    dynamic_quorum_floor = 2
+    auto_approve_delay_seconds = 0
+    patterns = ["^rm\\s+(-[rf]+\\s+)+/(etc|usr|var|boot|home|root|bin|sbin|lib)", "^rm\\s+(-[rf]+\\s+)+/[^t]", "^rm\\s+(-[rf]+\\s+)+~", "DROP\\s+DATABASE", "DROP\\s+SCHEMA", "TRUNCATE\\s+TABLE", "DELETE\\s+FROM\\s+[\\w.`\"\\[\\]]+\\s*(;|$|--|/\\*)", "^terraform\\s+destroy\\s*$", "^terraform\\s+destroy\\s+[^-]", "^kubectl\\s+delete\\s+(node|namespace|pv|pvc)\\b", "^helm\\s+uninstall.*--all", "^docker\\s+system\\s+prune\\s+-a", "^git\\s+push\\s+.*--force($|\\s)", "^aws\\s+.*terminate-instances", "^gcloud.*delete.*--quiet"]
+  [patterns.dangerous]
+    min_approvals = 1
+    dynamic_quorum = false
+    dynamic_quorum_floor = 1
+    auto_approve_delay_seconds = 0
+    patterns = ["^rm\\s+-[rf]{2}", "^rm\\s+-r", "^git\\s+reset\\s+--hard", "^git\\s+clean\\s+-fd", "^git\\s+push.*--force-with-lease", "^kubectl\\s+delete", "^helm\\s+uninstall", "^docker\\s+rm", "^docker\\s+rmi", "^terraform\\s+destroy.*-target", "^terraform\\s+state\\s+rm", "DROP\\s+TABLE", "DELETE\\s+FROM.*WHERE", "^chmod\\s+-R", "^chown\\s+-R"]
+  [patterns.caution]
+    min_approvals = 0
+    dynamic_quorum = false
+    dynamic_quorum_floor = 0
+    auto_approve_delay_seconds = 30
+    patterns = ["^rm\\s+[^-]", "^git\\s+stash\\s+drop", "^git\\s+branch\\s+-[dD]", "^npm\\s+uninstall", "^pip\\s+uninstall", "^cargo\\s+remove"]
+  [patterns.safe]
+    min_approvals = 0
+    dynamic_quorum = false
+    dynamic_quorum_floor = 0
+    auto_approve_delay_seconds = 0
+    patterns = ["^rm\\s+.*\\.log$", "^rm\\s+.*\\.tmp$", "^rm\\s+.*\\.bak$", "^git\\s+stash\\s*$", "^kubectl\\s+delete\\s+pod\\s", "^npm\\s+cache\\s+clean"]
+
+[integrations]
+  agent_mail_enabled = true
+  agent_mail_thread = "SLB-Reviews"
+  claude_hooks_enabled = true
+
+[agents]
+  trusted_self_approve = []
+  trusted_self_approve_delay_seconds = 300
+  blocked = []

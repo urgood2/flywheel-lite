@@ -1,0 +1,102 @@
+{
+  "alwaysThinkingEnabled": true,
+  "autoUpdatesChannel": "stable",
+  "enabledPlugins": {
+    "code-simplifier@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "greptile@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "superpowers@superpowers-dev": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "/home/ubuntu/.local/bin/dcg",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "/home/ubuntu/.local/bin/rch",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "python3 /home/ubuntu/.slb/hooks/slb_guard.py",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ]
+  },
+  "mcpServers": {
+    "mcp-agent-mail": {
+      "headers": {
+        "Authorization": "Bearer YOUR_AGENT_MAIL_TOKEN_HERE"
+      },
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp/"
+    }
+  },
+  "model": "opus",
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:*)",
+      "Fetch(domain:*)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(rm:*)",
+      "Bash(chmod:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(du:*)",
+      "Bash(tree:*)",
+      "Bash(curl:*)",
+      "Bash(tee:*)",
+      "Bash(test:*)",
+      "Bash(sort:*)",
+      "Bash(xargs:*)",
+      "Bash(echo:*)",
+      "Bash(make:*)",
+      "Bash(cmake:*)",
+      "Bash(ninja:*)",
+      "Bash(docker:*)",
+      "Bash(npm:*)",
+      "Bash(node:*)",
+      "Bash(pgrep:*)",
+      "Bash(pkill:*)",
+      "Bash(timeout:*)",
+      "WebSearch",
+      "Skill(superpowers:*)"
+    ],
+    "ask": [],
+    "defaultMode": "delegate",
+    "deny": []
+  },
+  "statusLine": {
+    "command": "bash ~/.claude/statusline-command.sh",
+    "type": "command"
+  }
+}

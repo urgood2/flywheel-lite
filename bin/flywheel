@@ -6,6 +6,16 @@ set -euo pipefail
 die() { echo "ERROR: $*" >&2; exit 1; }
 note() { echo "==> $*" >&2; }
 
+# Smart attach: use switch-client if already in tmux, else attach
+smart_attach() {
+  local target="$1"
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$target"
+  else
+    tmux attach -t "$target"
+  fi
+}
+
 # Load prompt from external file
 load_prompt() {
   local name="$1"
@@ -319,7 +329,7 @@ refine_plan() {
     note "Refine session already running: $session"
     note "Attaching... (Ctrl+B D to detach)"
     sleep 1
-    tmux attach -t "$session"
+    smart_attach "$session"
     return 0
   fi
   
@@ -360,7 +370,7 @@ refine_plan() {
   tmux new-session -d -s "$session" \
     "cd '$root' && flywheel refine --_loop '$root' $max_iters '$plan_in' $start_iter $until_approved"
   
-  tmux attach -t "$session"
+  smart_attach "$session"
 }
 
 make_beads() {
@@ -385,7 +395,7 @@ make_beads() {
     note "Beads session already running: $session"
     note "Attaching... (Ctrl+B D to detach)"
     sleep 1
-    tmux attach -t "$session"
+    smart_attach "$session"
     return 0
   fi
 
@@ -412,7 +422,7 @@ Then say BEADS_COMPLETE."
   tmux new-session -d -s "$session" "cd '$root' && claude --dangerously-skip-permissions"
   sleep 3
   tmux send-keys -t "$session" "$prompt" Enter
-  tmux attach -t "$session"
+  smart_attach "$session"
 }
 
 # New startwork function with commit agent support
@@ -702,7 +712,7 @@ compete_plans() {
   if tmux has-session -t "$session" 2>/dev/null; then
     note "Compete session running. Attaching... (Ctrl+B D to detach)"
     sleep 1
-    tmux attach -t "$session"
+    smart_attach "$session"
     return 0
   fi
   
@@ -716,7 +726,7 @@ compete_plans() {
   sleep 2
   
   tmux new-session -d -s "$session" "cd '"$root"' && flywheel-compete '"$context_file"'"
-  tmux attach -t "$session"
+  smart_attach "$session"
 }
 
 
@@ -831,5 +841,5 @@ START NOW."
   note "QA session started: $session"
   note "Attach with: tmux attach -t $session"
   sleep 1
-  tmux attach -t "$session"
+  smart_attach "$session"
 }
