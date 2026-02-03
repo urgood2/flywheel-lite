@@ -106,3 +106,42 @@ Run `flywheel doctor` to verify.
 ## License
 
 MIT
+
+## Safety Tools Integration
+
+Flywheel integrates with **dcg** (Destructive Command Guard) and **slb** (Smart Lint Buddy) to protect against dangerous commands.
+
+### DCG - Destructive Command Guard
+
+Blocks dangerous commands before execution:
+- `rm -rf` outside temp directories
+- `git reset --hard`, `git push --force`
+- `git branch -D`, `git clean -f`
+
+### SLB - Two-Person Authorization
+
+Requires approval for high-risk commands:
+- **CRITICAL** - 2+ approvals (data destruction, production deploys)
+- **DANGEROUS** - 1 approval (force pushes, schema changes)
+- **CAUTION** - Auto-approved after 30s
+
+**Setup:**
+```bash
+slb init                # Initialize SLB
+slb hook install        # Install Claude hook
+slb daemon start        # Start daemon (required)
+```
+
+### Config Templates
+
+| File | Purpose |
+|------|---------|
+| `config/claude-settings.json.template` | Claude Code settings with dcg+slb hooks |
+| `config/slb/config.toml.template` | SLB configuration |
+
+### tmux Nesting Fix
+
+Flywheel uses `smart_attach()` which:
+- Uses `tmux switch-client` when already in tmux
+- Uses `tmux attach` when in a regular terminal
+- No more "sessions should be nested with care" warnings
