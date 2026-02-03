@@ -179,13 +179,15 @@ plan_session() {
   cd "$root"
   note "Spawning planning session: $session"
   
-  # Try ntm spawn first; if it fails (e.g., "no space for new pane"), 
-  # create session detached and add agents separately
-  if \! ntm spawn "$session" --cc=1 2>/dev/null; then
-    note "Creating session detached (avoiding pane space issue)..."
-    tmux new-session -d -s "$session" -c "$root" 2>/dev/null || true
+  # Check if already in tmux - if so, create detached to avoid pane space issues
+  if [[ -n "${TMUX:-}" ]]; then
+    note "Inside tmux - creating session detached..."
+    tmux new-session -d -s "$session" -c "$root"
     sleep 1
-    ntm add "$session" --cc=1 2>/dev/null || note "Warning: could not add Claude agent"
+    ntm add "$session" --cc=1 || note "Warning: could not add Claude agent"
+  else
+    # Not in tmux, use ntm spawn normally
+    ntm spawn "$session" --cc=1
   fi
   
   sleep 3
