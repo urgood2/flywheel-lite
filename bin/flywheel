@@ -179,16 +179,15 @@ plan_session() {
   cd "$root"
   note "Spawning planning session: $session"
   
-  # Check if already in tmux - if so, create detached to avoid pane space issues
-  if [[ -n "${TMUX:-}" ]]; then
-    note "Inside tmux - creating session detached..."
-    tmux new-session -d -s "$session" -c "$root"
-    sleep 1
-    ntm add "$session" --cc=1 || note "Warning: could not add Claude agent"
+  # Always create session detached first, then add agents
+  # This avoids "no space for new pane" errors when running from small terminals
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Session already exists"
   else
-    # Not in tmux, use ntm spawn normally
-    ntm spawn "$session" --cc=1
+    tmux new-session -d -s "$session" -c "$root" -x 200 -y 50
   fi
+  sleep 1
+  ntm add "$session" --cc=1 || note "Warning: could not add Claude agent"
   
   sleep 3
   ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
