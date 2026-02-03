@@ -372,7 +372,17 @@ echo -e "${GREEN}✓ Copied to: $PLANNING_DIR/PLAN.md${NC}"
 echo
 
 echo -e "${BOLD}Next Steps:${NC}"
-echo "  1. flywheel beads              # Convert plan to beads (uses Doodlestein prompt)"
+echo "  1. flywheel beads              # Convert plan to beads"
 echo "  2. flywheel polish --max 9     # Polish beads (6-9 iterations)"
 echo "  3. flywheel startwork --cc 2   # Start agent swarm"
 echo
+
+# Ask to continue to beads
+echo -e "${CYAN}────────────────────────────────────────────────────────────────────${NC}"
+read -p "Continue to beads? [Y/n] " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    echo -e "${GREEN}Starting flywheel beads...${NC}"
+    echo
+    exec flywheel beads --plan "$PLANNING_DIR/PLAN.md"
+fi
