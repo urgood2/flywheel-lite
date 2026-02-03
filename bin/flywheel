@@ -470,7 +470,18 @@ startwork() {
   [[ "$gmi_n" -gt 0 ]] && args+=(--gmi="$gmi_n")
   
   note "Spawning: $session cc=$cc_n cod=$cod_n gmi=$gmi_n commit=$commit_agent"
-  ntm spawn "$session" "${args[@]}"
+  # Create session detached first to avoid "no space for new pane" errors
+  if tmux has-session -t "$session" 2>/dev/null; then
+    note "Session already exists, adding agents..."
+  else
+    tmux new-session -d -s "$session" -c "$root" -x 200 -y 50
+    sleep 1
+  fi
+  
+  # Add agents using ntm add (works with existing session)
+  [[ "$total_cc" -gt 0 ]] && ntm add "$session" --cc="$total_cc"
+  [[ "$cod_n" -gt 0 ]] && ntm add "$session" --cod="$cod_n"
+  [[ "$gmi_n" -gt 0 ]] && ntm add "$session" --gmi="$gmi_n"
   sleep 3
   
   # Pane layout: 1=shell, 2..(cc_n+1)=Claude workers, then commit agent if enabled
