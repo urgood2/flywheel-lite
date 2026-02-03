@@ -8,6 +8,18 @@ set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
+# Parse arguments
+PLAN_INPUT=""
+MAX_ROUNDS="${1:-3}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --plan) PLAN_INPUT="$2"; shift 2;;
+        --rounds) MAX_ROUNDS="$2"; shift 2;;
+        [0-9]*) MAX_ROUNDS="$1"; shift;;
+        *) shift;;
+    esac
+done
+
 PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 PLANNING_DIR="$PROJECT_DIR/planning"
@@ -33,36 +45,51 @@ echo -e "${BLUE}╚════════════════════�
 echo
 
 # ============================================================================
-# STEP 1: Initial Plan
+# STEP 1: Initial Plan (with auto-detection)
 # ============================================================================
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${CYAN}  STEP 1: Initial Plan${NC}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo
 
-if [[ -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
-    echo -e "${GREEN}✓ Found existing plan: $PLANNING_DIR/PLAN_v0.md${NC}"
-    echo -e "  Lines: $(wc -l < "$PLANNING_DIR/PLAN_v0.md")"
+# Determine which plan to use
+if [[ -n "$PLAN_INPUT" && -f "$PLAN_INPUT" ]]; then
+    # User specified a plan file
+    CURRENT_PLAN="$PLAN_INPUT"
+    echo -e "${GREEN}✓ Using specified plan: $CURRENT_PLAN${NC}"
+elif [[ -f "$PLANNING_DIR/PLAN.md" ]]; then
+    # Auto-detect refined plan (output of flywheel refine)
+    CURRENT_PLAN="$PLANNING_DIR/PLAN.md"
+    echo -e "${GREEN}✓ Found refined plan: $CURRENT_PLAN${NC}"
+    echo -e "  ${YELLOW}(This is the output from flywheel refine)${NC}"
+elif [[ -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
+    CURRENT_PLAN="$PLANNING_DIR/PLAN_v0.md"
+    echo -e "${GREEN}✓ Found initial plan: $CURRENT_PLAN${NC}"
 else
-    echo -e "${YELLOW}No initial plan found.${NC}"
+    echo -e "${YELLOW}No plan found.${NC}"
     echo
     echo "Options:"
     echo "  1) Run 'flywheel plan' first for interactive interview"
-    echo "  2) Run 'flywheel compete' for multi-model plan generation"
-    echo "  3) Create $PLANNING_DIR/PLAN_v0.md manually"
+    echo "  2) Run 'flywheel refine' to refine an existing plan"
+    echo "  3) Run 'flywheel compete' for multi-model plan generation"
+    echo "  4) Create $PLANNING_DIR/PLAN_v0.md manually"
+    echo "  5) Specify plan with: flywheel plan-pro --plan <file>"
     echo
     read -p "Press Enter after creating initial plan, or Ctrl+C to exit..."
     
-    if [[ ! -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
+    # Re-check after user action
+    if [[ -f "$PLANNING_DIR/PLAN.md" ]]; then
+        CURRENT_PLAN="$PLANNING_DIR/PLAN.md"
+    elif [[ -f "$PLANNING_DIR/PLAN_v0.md" ]]; then
+        CURRENT_PLAN="$PLANNING_DIR/PLAN_v0.md"
+    else
         echo -e "${RED}Error: Still no plan found. Exiting.${NC}"
         exit 1
     fi
 fi
 
-CURRENT_PLAN="$PLANNING_DIR/PLAN_v0.md"
+echo -e "  Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
 round=0
-
-# ============================================================================
 # Interactive Refinement Loop
 # ============================================================================
 while true; do

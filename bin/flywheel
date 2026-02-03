@@ -114,7 +114,7 @@ Usage:
   flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit]
   flywheel status                              # Show refine/beads progress
   flywheel attach [session]                    # Attach to refine/beads session
-  flywheel plan-pro [--rounds N]        # GPT Pro guided planning (manual steps)
+  flywheel plan-pro [--rounds N] [--plan FILE]        # GPT Pro guided planning (manual steps)
   flywheel polish [--max N]              # Iterative bead refinement (6-9x)
   flywheel finalize [--push]            # Commit beads, optionally push
   flywheel sync                         # Full finalize + push
@@ -680,7 +680,7 @@ main() {
     refine) refine_plan "$@";;
     beads) make_beads "$@";;
     compete) compete_plans;;
-    plan-pro) local r=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}";;
+    plan-pro) local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}" ${p:+--plan "$p"};;
     polish) local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
     startwork) startwork "$@";;
     status) show_status;;
