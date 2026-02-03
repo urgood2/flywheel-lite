@@ -1,0 +1,32 @@
+#\!/bin/bash
+# bd-sync-all - Sync beads for all projects with .beads/ directory
+set -euo pipefail
+
+LOG_FILE="$HOME/.bd-sync-all.log"
+PROJECTS_DIR="/data/projects"
+
+log() {
+    echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE"
+}
+
+log "=== Starting bd-sync-all ==="
+
+synced=0
+failed=0
+
+# Find all projects with .beads directory
+for project in "$PROJECTS_DIR"/*/; do
+    if [ -d "${project}.beads" ]; then
+        name=$(basename "$project")
+        log "Syncing: $name"
+        
+        if (cd "$project" && bd sync 2>&1 | tee -a "$LOG_FILE"); then
+            synced=$((synced + 1))
+        else
+            log "  ✗ Failed: $name"
+            failed=$((failed + 1))
+        fi
+    fi
+done
+
+log "=== Completed: $synced synced, $failed failed ==="
