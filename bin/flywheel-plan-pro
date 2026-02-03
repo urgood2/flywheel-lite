@@ -4,17 +4,40 @@ export STDBUF_O=L
 if [[ -z "${STDBUF_APPLIED:-}" ]] && command -v stdbuf &>/dev/null; then export STDBUF_APPLIED=1; exec stdbuf -oL bash "$0" "$@"; fi
 # flywheel-plan-pro: Guided planning with GPT Pro web integration
 # Interactive mode - choose to continue after each round
+# Runs in tmux session for persistence across SSH disconnects
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
+# Helpers
+die() { echo "ERROR: $*" >&2; exit 1; }
+note() { echo "==> $*" >&2; }
+
+sanitize_session_name() {
+  echo "$1" | tr "@.:" "---" | sed "s/[^a-zA-Z0-9_-]/-/g"
+}
+
+smart_attach() {
+  local target="$1"
+  if [[ -n "${TMUX:-}" ]]; then
+    tmux switch-client -t "$target"
+  else
+    tmux attach -t "$target"
+  fi
+}
+
 # Parse arguments
 PLAN_INPUT=""
 MAX_ROUNDS="${1:-3}"
+INNER_LOOP=false
+START_ROUND=1
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --plan) PLAN_INPUT="$2"; shift 2;;
         --rounds) MAX_ROUNDS="$2"; shift 2;;
+        --_inner) INNER_LOOP=true; shift;;
+        --_start-round) START_ROUND="$2"; shift 2;;
         [0-9]*) MAX_ROUNDS="$1"; shift;;
         *) shift;;
     esac
@@ -23,6 +46,71 @@ done
 PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 PLANNING_DIR="$PROJECT_DIR/planning"
+STATE_FILE="$PROJECT_DIR/.flywheel/plan-pro-state.json"
+
+# If not inner loop, handle tmux session management
+if [[ "$INNER_LOOP" != "true" ]]; then
+    session="plan-pro-$(sanitize_session_name "$PROJECT_NAME")"
+
+    # Check for existing session
+    if tmux has-session -t "$session" 2>/dev/null; then
+        note "Plan-pro session already running: $session"
+        note "Attaching... (Ctrl+B D to detach)"
+        sleep 1
+        smart_attach "$session"
+        exit 0
+    fi
+
+    # Check for saved state to resume
+    mkdir -p "$(dirname "$STATE_FILE")"
+    if [[ -f "$STATE_FILE" ]]; then
+        status=$(grep -oP '"status":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
+        if [[ "$status" == "in_progress" ]]; then
+            saved_round=$(grep -oP '"round":\s*\K[0-9]+' "$STATE_FILE" 2>/dev/null || echo "0")
+            saved_plan=$(grep -oP '"current_plan":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
+            if [[ "$saved_round" -gt 0 ]]; then
+                note "Found interrupted plan-pro at round $saved_round"
+                START_ROUND=$((saved_round))
+                [[ -n "$saved_plan" && -f "$saved_plan" ]] && PLAN_INPUT="$saved_plan"
+                note "Resuming from round $START_ROUND"
+            fi
+        elif [[ "$status" == "complete" ]]; then
+            note "Previous plan-pro completed. Starting fresh."
+            rm -f "$STATE_FILE"
+        fi
+    fi
+
+    note "Starting plan-pro session: $session"
+    note "Detach: Ctrl+B D | Reattach: flywheel plan-pro (or tmux attach -t $session)"
+    sleep 2
+
+    # Build args for inner loop
+    inner_args=(--_inner --_start-round "$START_ROUND")
+    [[ -n "$PLAN_INPUT" ]] && inner_args+=(--plan "$PLAN_INPUT")
+    inner_args+=(--rounds "$MAX_ROUNDS")
+
+    # Start tmux session with inner loop
+    tmux new-session -d -s "$session" "cd '$PROJECT_DIR' && flywheel-plan-pro ${inner_args[*]}"
+    smart_attach "$session"
+    exit 0
+fi
+
+# ============================================================================
+# INNER LOOP - runs inside tmux
+# ============================================================================
+
+save_state() {
+    local status="$1" round="$2" plan="$3"
+    mkdir -p "$(dirname "$STATE_FILE")"
+    cat > "$STATE_FILE" <<EOF
+{
+  "status": "$status",
+  "round": $round,
+  "current_plan": "$plan",
+  "updated": "$(date -Iseconds)"
+}
+EOF
+}
 
 # Colors
 RED="\033[0;31m"
@@ -41,6 +129,7 @@ echo -e "${BLUE}╔════════════════════�
 echo -e "${BLUE}║  ${BOLD}FLYWHEEL PLAN-PRO${NC}${BLUE} - Guided Planning with GPT Pro Integration   ║${NC}"
 echo -e "${BLUE}║  Project: $PROJECT_NAME${NC}"
 echo -e "${BLUE}║  Mode: Interactive (continue/stop after each round)${NC}"
+echo -e "${BLUE}║  Session: Persistent (Ctrl+B D to detach, rerun to reattach)${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
 
@@ -54,9 +143,9 @@ echo
 
 # Determine which plan to use
 if [[ -n "$PLAN_INPUT" && -f "$PLAN_INPUT" ]]; then
-    # User specified a plan file
+    # User specified a plan file (or resuming from state)
     CURRENT_PLAN="$PLAN_INPUT"
-    echo -e "${GREEN}✓ Using specified plan: $CURRENT_PLAN${NC}"
+    echo -e "${GREEN}✓ Using plan: $CURRENT_PLAN${NC}"
 elif [[ -f "$PLANNING_DIR/PLAN.md" ]]; then
     # Auto-detect refined plan (output of flywheel refine)
     CURRENT_PLAN="$PLANNING_DIR/PLAN.md"
@@ -76,7 +165,7 @@ else
     echo "  5) Specify plan with: flywheel plan-pro --plan <file>"
     echo
     read -p "Press Enter after creating initial plan, or Ctrl+C to exit..."
-    
+
     # Re-check after user action
     if [[ -f "$PLANNING_DIR/PLAN.md" ]]; then
         CURRENT_PLAN="$PLANNING_DIR/PLAN.md"
@@ -89,23 +178,32 @@ else
 fi
 
 echo -e "  Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
-round=0
+
+# Check if resuming mid-round
+round=$((START_ROUND - 1))
+if [[ $START_ROUND -gt 1 ]]; then
+    echo -e "${YELLOW}Resuming from round $START_ROUND${NC}"
+fi
+
 # Interactive Refinement Loop
 # ============================================================================
 while true; do
     ((++round))
-    
+
+    # Save state at start of each round
+    save_state "in_progress" "$round" "$CURRENT_PLAN"
+
     echo
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}  ROUND $round: GPT Pro Review${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
-    
+
     # Show plan location
     echo -e "${BOLD}📄 Current Plan:${NC} $CURRENT_PLAN"
     echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
     echo
-    
+
     # The GPT Pro review prompt
     GPT_PROMPT='Carefully review this entire plan for me and come up with your best revisions
 in terms of better architecture, new features, changed features, etc. to make
@@ -162,13 +260,13 @@ standalone document I can save directly.
     echo
     echo -e "${BOLD}Then paste your plan content after the prompt.${NC}"
     echo
-    
+
     # Wait for user to complete GPT Pro review
     echo -e "${CYAN}🌐 Open: https://chat.openai.com (GPT Pro with Extended Reasoning)${NC}"
     echo
     read -p "Press Enter when GPT Pro has finished reviewing..."
     echo
-    
+
     # Get GPT output
     echo -e "${BOLD}📥 Paste GPT Pro's response below (end with Ctrl+D on empty line):${NC}"
     GPT_OUTPUT_FILE="$PLANNING_DIR/gpt_round${round}.md"
@@ -177,24 +275,24 @@ standalone document I can save directly.
     echo -e "${GREEN}✓ Saved GPT output to: $GPT_OUTPUT_FILE${NC}"
     echo -e "   Lines: $(wc -l < "$GPT_OUTPUT_FILE")"
     echo
-    
+
     # Integration phase
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}  ROUND $round: Claude Code Integration${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
-    
+
     NEW_PLAN="$PLANNING_DIR/PLAN_v${round}.md"
-    
+
     echo -e "${BOLD}Running Claude Code to integrate revisions...${NC}"
     echo -e "Creating: $NEW_PLAN"
     echo
-    
+
     # Create integration prompt
     INTEGRATE_PROMPT="Read the current plan at $CURRENT_PLAN and integrate the following GPT Pro revisions.
 Save the integrated plan as $NEW_PLAN.
 
-Use ultrathink. Be meticulous. At the end, tell me which changes you wholeheartedly agree with, 
+Use ultrathink. Be meticulous. At the end, tell me which changes you wholeheartedly agree with,
 which you somewhat agree with, and which you disagree with.
 
 GPT Pro's revisions:
@@ -208,14 +306,17 @@ $(cat "$GPT_OUTPUT_FILE")"
         echo -e "${RED}Error: claude command not found${NC}"
         echo "Please integrate manually"
     fi
-    
+
     # Check if new plan was created
     if [[ -f "$NEW_PLAN" ]]; then
         echo
         echo -e "${GREEN}✓ Created: $NEW_PLAN${NC}"
         echo -e "   Lines: $(wc -l < "$NEW_PLAN")"
         CURRENT_PLAN="$NEW_PLAN"
-        
+
+        # Update state with new plan
+        save_state "in_progress" "$round" "$CURRENT_PLAN"
+
         # Show diff
         if [[ $round -gt 1 ]]; then
             PREV_PLAN="$PLANNING_DIR/PLAN_v$((round-1)).md"
@@ -230,7 +331,7 @@ $(cat "$GPT_OUTPUT_FILE")"
         read -p "Press Enter after manually creating $NEW_PLAN (or Ctrl+C to stop)..."
         [[ -f "$NEW_PLAN" ]] && CURRENT_PLAN="$NEW_PLAN"
     fi
-    
+
     # Ask to continue
     echo
     echo -e "${BOLD}────────────────────────────────────────────────────────────────────${NC}"
@@ -252,6 +353,10 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║  ${BOLD}PLAN REFINEMENT COMPLETE${NC}${GREEN}                                        ║${NC}"
 echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════════╝${NC}"
 echo
+
+# Mark complete
+save_state "complete" "$round" "$CURRENT_PLAN"
+
 echo -e "${BOLD}📄 Plan Versions:${NC}"
 ls -la "$PLANNING_DIR"/PLAN_v*.md 2>/dev/null | while read line; do
     echo "   $line"
