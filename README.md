@@ -1,5 +1,7 @@
 # Flywheel-Lite
 
+> **A convenience wrapper for [Agent Flywheel](https://agent-flywheel.com/)** — the multi-agent development methodology by [@jxnl](https://twitter.com/jxnl). This repo provides shell scripts and tmux orchestration to streamline the Flywheel workflow.
+
 **Ship faster with AI agent swarms.** An orchestration layer for multi-model AI development workflows.
 
 ```
@@ -318,6 +320,14 @@ Flywheel invests heavily in planning:
 - Only then: parallel implementation
 
 The result? Less rework. Faster shipping. Better code.
+
+---
+
+## Acknowledgments
+
+This project is built on top of the **[Agent Flywheel](https://agent-flywheel.com/)** methodology. Full credit to the original authors for the core concepts of multi-agent planning, beads-based task decomposition, and parallel implementation workflows.
+
+Flywheel-Lite is an independent convenience layer — not affiliated with or endorsed by the Agent Flywheel project.
 
 ---
 
