@@ -63,6 +63,7 @@ load_config() {
   : "${FW_INTERVIEW_ROUNDS:=2}" "${FW_PLAN_ITERS:=3}" "${FW_CC:=3}" "${FW_COD:=2}" "${FW_GMI:=1}"
   : "${FW_CLAUDE_MODEL:=opus}" "${FW_CODEX_IMPL_MODEL:=gpt-5.2-codex}" "${FW_GPT_PLAN_MODEL:=gpt-5.2}"
   : "${FW_CODEX_REASONING:=high}" "${FW_GEMINI_MODEL:=gemini-2.5-pro}" "${FW_SAFE:=0}"
+  : "${FW_COMMIT:=true}"
 }
 
 git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
@@ -111,7 +112,8 @@ Usage:
   flywheel refine --iters N                  # Fixed iterations mode (legacy)
   flywheel beads [--plan FILE] [--min-beads N]
   flywheel compete                              # Generate 4 competing plans + synthesize
-  flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit]
+  flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit|--no-commit]
+  flywheel add-commit                          # Add commit agent to running session
   flywheel status                              # Show refine/beads progress
   flywheel attach [session]                    # Attach to refine/beads session
   flywheel plan-pro [--rounds N] [--plan FILE]        # GPT Pro guided planning (manual steps)
@@ -431,14 +433,15 @@ startwork() {
   load_config "$root"
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   local cc_n="$FW_CC" cod_n="$FW_COD" gmi_n="$FW_GMI"
-  local commit_agent=false
+  local commit_agent="$FW_COMMIT"
   while [[ $# -gt 0 ]]; do
-    case "$1" in 
-      --cc) cc_n="$2"; shift 2;; 
-      --cod) cod_n="$2"; shift 2;; 
-      --gmi) gmi_n="$2"; shift 2;; 
+    case "$1" in
+      --cc) cc_n="$2"; shift 2;;
+      --cod) cod_n="$2"; shift 2;;
+      --gmi) gmi_n="$2"; shift 2;;
       --commit) commit_agent=true; shift;;
-      *) die "Unknown: $1";; 
+      --no-commit) commit_agent=false; shift;;
+      *) die "Unknown: $1";;
     esac
   done
   cd "$root"
@@ -478,6 +481,8 @@ startwork() {
     if [[ -n "$commit_prompt" ]]; then
       note "Sending prompt to Commit Agent pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$commit_prompt" Enter
+      # Set pane title so nudge can skip it
+      tmux select-pane -t "${session}:1.${pane}" -T "commit-agent"
       pane=$((pane + 1))
     else
       note "Warning: COMMIT_AGENT.md prompt not found"
@@ -517,6 +522,36 @@ startwork() {
   fi
   note "Attach: ntm attach $session"
 }
+
+# Add commit agent to an already running session
+add_commit_agent() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  local session; session="$(sanitize_session_name "$(basename "$root")")"
+
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    die "No session '$session' running. Use 'flywheel startwork' first."
+  fi
+
+  local commit_prompt
+  commit_prompt=$(load_prompt "COMMIT_AGENT")
+  if [[ -z "$commit_prompt" ]]; then
+    die "COMMIT_AGENT.md prompt not found at ~/.config/flywheel/prompts/COMMIT_AGENT.md"
+  fi
+
+  # Get current pane count to determine new pane index
+  local pane_count_before
+  pane_count_before=$(tmux list-panes -t "$session" 2>/dev/null | wc -l)
+
+  note "Adding commit agent to session: $session"
+  ntm add "$session" --cc=1 --prompt="$commit_prompt"
+
+  # Set pane title on the newly added pane (last pane)
+  local new_pane=$((pane_count_before + 1))
+  sleep 1  # Wait for pane to be created
+  tmux select-pane -t "${session}:1.${new_pane}" -T "commit-agent" 2>/dev/null || true
+  note "Commit Agent added (15-min cycles)"
+}
+
 show_status() {
   local root; root="$(git_root)" || die "Not in a git repo."
   local name=$(basename "$root")
@@ -645,7 +680,14 @@ nudge_agents() {
   for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
     local pane_title
     pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
-    
+
+    # Skip commit agent - it runs on its own 15-min cycle
+    if [[ "$pane_title" == *"commit"* ]]; then
+      note "  Skipping pane $pane - commit agent (autonomous)"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
     if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
       note "  Nudging pane $pane ($pane_title)"
       # Different nudge messages based on agent type
@@ -683,6 +725,7 @@ main() {
     plan-pro) local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}" ${p:+--plan "$p"};;
     polish) local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
     startwork) startwork "$@";;
+    add-commit) add_commit_agent;;
     status) show_status;;
     jobs) list_jobs;;
     attach) attach_session "${1:-}";;
