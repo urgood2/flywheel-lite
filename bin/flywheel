@@ -575,9 +575,7 @@ add_watchdog() {
   fi
 
   # Check if watchdog already running in pane 1
-  local pane1_cmd
-  pane1_cmd=$(tmux capture-pane -t "${session}:1.1" -p 2>/dev/null | tail -5 | grep -c "watchdog" || echo "0")
-  if [[ "$pane1_cmd" -gt 0 ]]; then
+  if tmux capture-pane -t "${session}:1.1" -p 2>/dev/null | tail -5 | grep -q "watchdog"; then
     note "Watchdog appears to already be running in pane 1"
     return 0
   fi
