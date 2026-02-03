@@ -106,14 +106,33 @@ while true; do
     echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
     echo
     
-    # Try to copy plan to clipboard
-    if command -v pbcopy &> /dev/null; then
-        cat "$CURRENT_PLAN" | pbcopy 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
-    elif command -v xclip &> /dev/null && [[ -n "${DISPLAY:-}" ]]; then
-        cat "$CURRENT_PLAN" | xclip -selection clipboard 2>/dev/null && echo -e "${GREEN}✓ Plan copied to clipboard!${NC}" || true
+    # Copy plan to clipboard (with OSC 52 for SSH support)
+    clipboard_copy() {
+        local file="$1"
+        # Method 1: OSC 52 escape sequence (works over SSH in iTerm2, kitty, etc.)
+        if [[ -n "${SSH_TTY:-}" || -n "${SSH_CLIENT:-}" ]]; then
+            local encoded
+            encoded=$(base64 < "$file" | tr -d '\n')
+            # OSC 52 sequence: \033]52;c;<base64>\a
+            printf '\e]52;c;%s\a' "$encoded" 2>/dev/null && return 0
+        fi
+        # Method 2: Local clipboard tools
+        if command -v pbcopy &>/dev/null; then
+            pbcopy < "$file" 2>/dev/null && return 0
+        elif command -v xclip &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+            xclip -selection clipboard < "$file" 2>/dev/null && return 0
+        elif command -v xsel &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+            xsel --clipboard < "$file" 2>/dev/null && return 0
+        fi
+        return 1
+    }
+
+    if clipboard_copy "$CURRENT_PLAN"; then
+        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
     else
-        echo -e "${YELLOW}📋 Copy to local clipboard (Mac):${NC}"
-        echo -e "   vps "cat $CURRENT_PLAN" | pbcopy"
+        echo -e "${YELLOW}⚠ Could not auto-copy to clipboard.${NC}"
+        echo -e "  ${CYAN}Run on your local machine:${NC}"
+        echo -e "  ${BOLD}ssh vps \"cat $CURRENT_PLAN\" | pbcopy${NC}"
     fi
     echo
     
