@@ -139,6 +139,17 @@ slb daemon start        # Start daemon (required)
 | `config/claude-settings.json.template` | Claude Code settings with dcg+slb hooks |
 | `config/slb/config.toml.template` | SLB configuration |
 
+**Required changes before use:**
+
+In `config/claude-settings.json.template`, replace the placeholder token:
+```json
+"Authorization": "Bearer YOUR_AGENT_MAIL_TOKEN_HERE"
+```
+with your actual Agent Mail MCP token. Generate one with:
+```bash
+am token generate  # or however your Agent Mail instance creates tokens
+```
+
 ### tmux Nesting Fix
 
 Flywheel uses `smart_attach()` which:
