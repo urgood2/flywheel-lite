@@ -1,6 +1,6 @@
 # Flywheel-Lite
 
-> **A convenience wrapper for [Agent Flywheel](https://agent-flywheel.com/)** — the multi-agent development methodology by [@jxnl](https://twitter.com/jxnl). This repo provides shell scripts and tmux orchestration to streamline the Flywheel workflow.
+> **A convenience wrapper for [Agent Flywheel](https://agent-flywheel.com/)** — a multi-agent development methodology. This repo provides shell scripts and tmux orchestration to streamline the Flywheel workflow.
 
 **Ship faster with AI agent swarms.** An orchestration layer for multi-model AI development workflows.
 
