@@ -178,11 +178,20 @@ plan_session() {
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   cd "$root"
   note "Spawning planning session: $session"
-  ntm spawn "$session" --cc=1
+  
+  # Try ntm spawn first; if it fails (e.g., "no space for new pane"), 
+  # create session detached and add agents separately
+  if \! ntm spawn "$session" --cc=1 2>/dev/null; then
+    note "Creating session detached (avoiding pane space issue)..."
+    tmux new-session -d -s "$session" -c "$root" 2>/dev/null || true
+    sleep 1
+    ntm add "$session" --cc=1 2>/dev/null || note "Warning: could not add Claude agent"
+  fi
+  
   sleep 3
   ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
   note "Attaching..."
-  ntm attach "$session"
+  smart_attach "$session"
 }
 
 find_latest_iter() {
