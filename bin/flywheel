@@ -63,7 +63,7 @@ load_config() {
   : "${FW_INTERVIEW_ROUNDS:=2}" "${FW_PLAN_ITERS:=3}" "${FW_CC:=3}" "${FW_COD:=2}" "${FW_GMI:=1}"
   : "${FW_CLAUDE_MODEL:=opus}" "${FW_CODEX_IMPL_MODEL:=gpt-5.2-codex}" "${FW_GPT_PLAN_MODEL:=gpt-5.2}"
   : "${FW_CODEX_REASONING:=high}" "${FW_GEMINI_MODEL:=gemini-2.5-pro}" "${FW_SAFE:=0}"
-  : "${FW_COMMIT:=true}"
+  : "${FW_COMMIT:=true}" "${FW_WATCHDOG:=true}" "${FW_WATCHDOG_INTERVAL:=120}"
 }
 
 git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
@@ -112,8 +112,9 @@ Usage:
   flywheel refine --iters N                  # Fixed iterations mode (legacy)
   flywheel beads [--plan FILE] [--min-beads N]
   flywheel compete                              # Generate 4 competing plans + synthesize
-  flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit|--no-commit]
+  flywheel startwork [--cc N] [--cod N] [--gmi N] [--commit|--no-commit] [--watchdog|--no-watchdog]
   flywheel add-commit                          # Add commit agent to running session
+  flywheel add-watchdog [interval]             # Add watchdog to running session
   flywheel status                              # Show refine/beads progress
   flywheel attach [session]                    # Attach to refine/beads session
   flywheel plan-pro [--rounds N] [--plan FILE]        # GPT Pro guided planning (manual steps)
@@ -434,6 +435,7 @@ startwork() {
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   local cc_n="$FW_CC" cod_n="$FW_COD" gmi_n="$FW_GMI"
   local commit_agent="$FW_COMMIT"
+  local watchdog="$FW_WATCHDOG"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --cc) cc_n="$2"; shift 2;;
@@ -441,6 +443,8 @@ startwork() {
       --gmi) gmi_n="$2"; shift 2;;
       --commit) commit_agent=true; shift;;
       --no-commit) commit_agent=false; shift;;
+      --watchdog) watchdog=true; shift;;
+      --no-watchdog) watchdog=false; shift;;
       *) die "Unknown: $1";;
     esac
   done
@@ -520,6 +524,13 @@ startwork() {
   if [[ "$commit_agent" == true ]]; then
     note "Commit Agent running in dedicated pane (15-min cycles)"
   fi
+
+  # Start watchdog in pane 1 (shell pane) to auto-nudge idle agents
+  if [[ "$watchdog" == "true" ]]; then
+    note "Starting watchdog (nudge every ${FW_WATCHDOG_INTERVAL}s)"
+    tmux send-keys -t "${session}:1.1" "flywheel-watchdog '$session' '$FW_WATCHDOG_INTERVAL'" Enter
+  fi
+
   note "Attach: ntm attach $session"
 }
 
@@ -550,6 +561,30 @@ add_commit_agent() {
   sleep 1  # Wait for pane to be created
   tmux select-pane -t "${session}:1.${new_pane}" -T "commit-agent" 2>/dev/null || true
   note "Commit Agent added (15-min cycles)"
+}
+
+# Add watchdog to an already running session
+add_watchdog() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+  local session; session="$(sanitize_session_name "$(basename "$root")")"
+  local interval="${1:-$FW_WATCHDOG_INTERVAL}"
+
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    die "No session '$session' running. Use 'flywheel startwork' first."
+  fi
+
+  # Check if watchdog already running in pane 1
+  local pane1_cmd
+  pane1_cmd=$(tmux capture-pane -t "${session}:1.1" -p 2>/dev/null | tail -5 | grep -c "watchdog" || echo "0")
+  if [[ "$pane1_cmd" -gt 0 ]]; then
+    note "Watchdog appears to already be running in pane 1"
+    return 0
+  fi
+
+  note "Starting watchdog in session: $session (interval: ${interval}s)"
+  tmux send-keys -t "${session}:1.1" "flywheel-watchdog '$session' '$interval'" Enter
+  note "Watchdog started"
 }
 
 show_status() {
@@ -726,6 +761,7 @@ main() {
     polish) local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
     startwork) startwork "$@";;
     add-commit) add_commit_agent;;
+    add-watchdog) add_watchdog "$@";;
     status) show_status;;
     jobs) list_jobs;;
     attach) attach_session "${1:-}";;
