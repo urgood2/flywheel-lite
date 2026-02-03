@@ -106,51 +106,58 @@ while true; do
     echo -e "   Lines: $(wc -l < "$CURRENT_PLAN") | Size: $(du -h "$CURRENT_PLAN" | cut -f1)"
     echo
     
-    # Copy plan to clipboard (with OSC 52 for SSH support)
-    clipboard_copy() {
-        local file="$1"
-        # Method 1: OSC 52 escape sequence (works over SSH in iTerm2, kitty, etc.)
-        if [[ -n "${SSH_TTY:-}" || -n "${SSH_CLIENT:-}" ]]; then
-            local encoded
-            encoded=$(base64 < "$file" | tr -d '\n')
-            # OSC 52 sequence: \033]52;c;<base64>\a
-            printf '\e]52;c;%s\a' "$encoded" 2>/dev/null && return 0
-        fi
-        # Method 2: Local clipboard tools
-        if command -v pbcopy &>/dev/null; then
-            pbcopy < "$file" 2>/dev/null && return 0
-        elif command -v xclip &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
-            xclip -selection clipboard < "$file" 2>/dev/null && return 0
-        elif command -v xsel &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
-            xsel --clipboard < "$file" 2>/dev/null && return 0
-        fi
-        return 1
-    }
-
-    if clipboard_copy "$CURRENT_PLAN"; then
-        echo -e "${GREEN}✓ Plan copied to clipboard!${NC}"
-    else
-        echo -e "${YELLOW}⚠ Could not auto-copy to clipboard.${NC}"
-        echo -e "  ${CYAN}Run on your local machine:${NC}"
-        echo -e "  ${BOLD}ssh vps \"cat $CURRENT_PLAN\" | pbcopy${NC}"
-    fi
-    echo
-    
-    # Show the prompt to use
-    echo -e "${BOLD}📋 COPY THIS PROMPT TO GPT 5.2 PRO (Extended Reasoning):${NC}"
-    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
-    cat << 'PROMPT'
-Carefully review this entire plan for me and come up with your best revisions 
-in terms of better architecture, new features, changed features, etc. to make 
-it better, more robust/reliable, more performant, more compelling/useful, etc. 
-For each proposed change, give me your detailed analysis and rationale/justification 
-for why it would make the project better along with the git-diff style change 
+    # The GPT Pro review prompt
+    GPT_PROMPT='Carefully review this entire plan for me and come up with your best revisions
+in terms of better architecture, new features, changed features, etc. to make
+it better, more robust/reliable, more performant, more compelling/useful, etc.
+For each proposed change, give me your detailed analysis and rationale/justification
+for why it would make the project better along with the git-diff style change
 versus the original plan shown below.
 
 At the end of your response, provide a COMPLETE REVISED PLAN as a downloadable
 markdown file that incorporates all your approved changes. This should be a
 standalone document I can save directly.
-PROMPT
+
+---
+
+'
+
+    # Copy prompt + plan to clipboard (with OSC 52 for SSH support)
+    clipboard_copy_content() {
+        local content="$1"
+        # Method 1: OSC 52 escape sequence (works over SSH in iTerm2, kitty, Ghostty, etc.)
+        if [[ -n "${SSH_TTY:-}" || -n "${SSH_CLIENT:-}" ]]; then
+            local encoded
+            encoded=$(echo -n "$content" | base64 | tr -d '\n')
+            printf '\e]52;c;%s\a' "$encoded" 2>/dev/null && return 0
+        fi
+        # Method 2: Local clipboard tools
+        if command -v pbcopy &>/dev/null; then
+            echo -n "$content" | pbcopy 2>/dev/null && return 0
+        elif command -v xclip &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+            echo -n "$content" | xclip -selection clipboard 2>/dev/null && return 0
+        elif command -v xsel &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+            echo -n "$content" | xsel --clipboard 2>/dev/null && return 0
+        fi
+        return 1
+    }
+
+    # Combine prompt + plan for clipboard
+    CLIPBOARD_CONTENT="${GPT_PROMPT}$(cat "$CURRENT_PLAN")"
+
+    if clipboard_copy_content "$CLIPBOARD_CONTENT"; then
+        echo -e "${GREEN}✓ Prompt + Plan copied to clipboard!${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not auto-copy to clipboard.${NC}"
+    fi
+    # Always show fallback command
+    echo -e "  ${CYAN}Fallback (run locally):${NC} ssh vps \"cat $CURRENT_PLAN\" | pbcopy"
+    echo
+
+    # Show the prompt visually (in case clipboard fails or for reference)
+    echo -e "${BOLD}📋 GPT 5.2 PRO PROMPT (already in clipboard):${NC}"
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    echo -n "$GPT_PROMPT" | head -c -4  # Remove trailing newlines and ---
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
     echo
     echo -e "${BOLD}Then paste your plan content after the prompt.${NC}"
