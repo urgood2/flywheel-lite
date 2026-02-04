@@ -784,7 +784,7 @@ main() {
     status) show_status;;
     jobs) list_jobs;;
     attach) attach_session "${1:-}";;
-    finalize) finalize_work "";;
+    finalize) finalize_work "$@";;
     sync) sync_to_remote;;
     qa) run_qa;;
     nudge) nudge_agents "$@";;
@@ -828,7 +828,6 @@ compete_plans() {
 }
 
 
-main "$@"
 
 
 # ============================================================================
@@ -941,3 +940,5 @@ START NOW."
   sleep 1
   smart_attach "$session"
 }
+
+main "$@"
