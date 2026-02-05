@@ -118,3 +118,58 @@ Use this to find how similar problems were solved before.
 3. **DONE**: Your session is auto-indexed for future reference
 
 **Ignoring memory = repeating mistakes. Always check first.**
+
+---
+
+## AGENT MAIL COORDINATION (MANDATORY)
+
+When working in multi-agent swarms, use Agent Mail MCP tools to prevent conflicts:
+
+### File Reservations (Prevent Edit Conflicts)
+
+**BEFORE editing any file**, reserve it:
+```
+# MCP tool call (via your MCP client)
+mcp.file_reservation_create({
+  "paths": ["src/foo.lua", "src/bar.lua"],
+  "ttl_seconds": 300,
+  "exclusive": true
+})
+```
+
+**AFTER finishing edits**, release it:
+```
+mcp.file_reservation_release({
+  "paths": ["src/foo.lua", "src/bar.lua"]
+})
+```
+
+**Check for conflicts before starting:**
+```bash
+am file_reservations active
+```
+
+If a file is already reserved by another agent, **skip that bead** and move to the next one.
+
+### Agent Messaging (Handoffs & Notifications)
+
+**Notify other agents** when you unblock work:
+```
+mcp.send_message({
+  "to": "swarm",
+  "subject": "Unblocked: br-xxx",
+  "body": "Completed dependency, br-yyy is now unblocked"
+})
+```
+
+**Check for messages** at the start of each work cycle:
+```
+mcp.list_messages({"unread_only": true})
+```
+
+### Coordination Workflow
+1. **START**: Check `am file_reservations active` for conflicts
+2. **CLAIM**: Reserve files before editing
+3. **WORK**: Implement the bead
+4. **RELEASE**: Release file reservations
+5. **NOTIFY**: Send message if you unblocked other beads

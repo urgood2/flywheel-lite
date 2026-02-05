@@ -42,9 +42,11 @@ IMMEDIATELY RUN: `br update <ID> --status in_progress && br show <ID>`
 
 ## Your Tools
 
+### Beads Management
 | Command | Purpose |
 |---------|---------|
 | `bv --robot-next` | Get your next assigned task (bead) |
+| `bv --robot-triage` | Get full triage with all recommendations |
 | `br show <ID>` | View full task details |
 | `br update <ID> --status in_progress` | Mark task as started |
 | `br update <ID> --claim` | Claim an unclaimed bead |
@@ -52,16 +54,53 @@ IMMEDIATELY RUN: `br update <ID> --status in_progress && br show <ID>`
 | `br comments add <ID> "msg"` | Add comment to bead |
 | `br create "<title>" -t <type>` | Create new task if you find issues |
 
+### Agent Mail (Multi-Agent Coordination)
+| Command / MCP Tool | Purpose |
+|--------------------|---------|
+| `am file_reservations active` | Check which files are reserved |
+| `mcp.file_reservation_create(paths, ttl)` | Reserve files before editing |
+| `mcp.file_reservation_release(paths)` | Release files when done |
+| `mcp.send_message(to, subject, body)` | Notify other agents |
+| `mcp.list_messages()` | Check for incoming messages |
+
+### Memory Systems
+| Command | Purpose |
+|---------|---------|
+| `cm context "<task>"` | Get relevant playbook rules |
+| `cass search "<keywords>"` | Find similar past work |
+
+## Pre-Work Protocol (BEFORE starting any bead)
+
+**MANDATORY: Read project rules and check for conflicts**
+
+```bash
+# 1. Read project rules (CRITICAL - contains deletion/git rules)
+cat AGENTS.md 2>/dev/null | head -100
+cat README.md 2>/dev/null | head -50
+
+# 2. Check for file conflicts
+am file_reservations active
+
+# 3. Get relevant memory rules
+cm context "<brief task description>" | head -30
+
+# 4. Now get your bead
+bv --robot-next
+```
+
 ## Work Loop (EXECUTE EACH STEP, DON'T DESCRIBE IT)
 
 ```
-1. RUN: bv --robot-next
-2. RUN: br update <ID> --status in_progress
-3. RUN: br show <ID>
-4. IMPLEMENT the task (write code, run commands)
-5. VERIFY (run tests, check output)
-6. RUN: br close <ID>
-7. RUN: bv --robot-next   <-- IMMEDIATELY, no summary
+1. RUN: Pre-Work Protocol (above)
+2. RUN: bv --robot-next
+3. RUN: br update <ID> --status in_progress
+4. RUN: br show <ID>
+5. RESERVE: Files you will edit (mcp.file_reservation_create)
+6. IMPLEMENT the task (write code, run commands)
+7. VERIFY (run tests, check output)
+8. RELEASE: File reservations (mcp.file_reservation_release)
+9. RUN: br close <ID>
+10. RUN: bv --robot-next   <-- IMMEDIATELY, no summary
 ```
 
 ## FORBIDDEN OUTPUTS
@@ -87,6 +126,7 @@ These phrases mean you have FAILED:
 | Don't know the command | Check `--help` or search docs |
 | Multiple valid approaches | Pick the simplest, document choice |
 | Missing information | Infer from context, proceed with assumption |
+| File already reserved | Skip bead, move to next with `bv --robot-next` |
 | Truly impossible | Mark BLOCKED, move to next bead |
 
 **Example - WRONG:**
@@ -119,12 +159,17 @@ For non-trivial beads:
 - Identify changes needed
 
 **Step 3: EXECUTE**
+- Reserve files with Agent Mail
 - Make surgical, minimal changes
 - Match existing code style
 
 **Step 4: VERIFY**
 - Run linter/tests
 - Confirm it works
+
+**Step 5: CLEANUP**
+- Release file reservations
+- Close bead
 
 ---
 
@@ -147,6 +192,7 @@ Before `br close <ID>`:
 - [ ] Code works (tested)
 - [ ] No lint errors
 - [ ] Changes verified
+- [ ] File reservations released
 
 ## If Stuck (3 failures)
 
@@ -155,4 +201,4 @@ Before `br close <ID>`:
 3. `br update <ID> --status blocked`
 4. `bv --robot-next` (move on)
 
-START NOW: Run `bv --robot-next`
+START NOW: Run the Pre-Work Protocol, then `bv --robot-next`

@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # Flywheel Watchdog - nudges IDLE agents every N seconds
+# Exits when all work is complete (actionable_count == 0)
 
 set -euo pipefail
 
 SESSION="${1:-}"
 INTERVAL="${2:-60}"
+MAX_ZERO_CHECKS="${3:-3}"  # Exit after N consecutive zero-work checks
 
-[[ -n "$SESSION" ]] || { echo "Usage: flywheel-watchdog <session> [interval]"; exit 1; }
+[[ -n "$SESSION" ]] || { echo "Usage: flywheel-watchdog <session> [interval] [max_zero_checks]"; exit 1; }
 
 echo "Watchdog started: session=$SESSION interval=${INTERVAL}s"
 echo "Only nudges idle agents (skips working ones)"
+echo "Will exit after $MAX_ZERO_CHECKS consecutive checks with 0 actionable beads"
 echo "Press Ctrl+C to stop"
 
 # Find the repo root from session name
 REPO_ROOT="/data/projects/$SESSION"
 [[ -d "$REPO_ROOT" ]] || REPO_ROOT="."
+
+ZERO_COUNT=0
 
 while true; do
     sleep "$INTERVAL"
@@ -24,7 +29,37 @@ while true; do
         exit 0
     fi
     
-    echo "$(date +%H:%M:%S) Checking for idle agents..."
     cd "$REPO_ROOT" 2>/dev/null || true
-    flywheel nudge 2>&1 | grep -E "(Nudging|Skipping|Nudged)" || true
+    
+    # Check if work remains
+    ACTIONABLE=$(bv --robot-triage 2>/dev/null | jq -r ".triage.quick_ref.actionable_count // 0" 2>/dev/null || echo "0")
+    IN_PROGRESS=$(bv --robot-triage 2>/dev/null | jq -r ".triage.quick_ref.in_progress_count // 0" 2>/dev/null || echo "0")
+    
+    echo "$(date +%H:%M:%S) Actionable: $ACTIONABLE | In-progress: $IN_PROGRESS"
+    
+    # If no actionable beads AND nothing in progress
+    if [[ "$ACTIONABLE" -eq 0 && "$IN_PROGRESS" -eq 0 ]]; then
+        ZERO_COUNT=$((ZERO_COUNT + 1))
+        echo "  → No work remaining (check $ZERO_COUNT/$MAX_ZERO_CHECKS)"
+        
+        if [[ "$ZERO_COUNT" -ge "$MAX_ZERO_CHECKS" ]]; then
+            echo ""
+            echo "════════════════════════════════════════════════════════════"
+            echo "  ✅ ALL WORK COMPLETE"
+            echo "  Actionable beads: 0 | In-progress: 0"
+            echo "  Consecutive zero checks: $ZERO_COUNT"
+            echo "════════════════════════════════════════════════════════════"
+            echo ""
+            echo "Running finalize..."
+            flywheel finalize 2>&1 || true
+            echo ""
+            echo "Watchdog exiting. Session still running for review."
+            exit 0
+        fi
+    else
+        # Reset counter if work appeared
+        ZERO_COUNT=0
+        echo "$(date +%H:%M:%S) Checking for idle agents..."
+        flywheel nudge 2>&1 | grep -E "(Nudging|Skipping|Nudged)" || true
+    fi
 done
