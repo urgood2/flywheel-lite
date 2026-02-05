@@ -258,11 +258,27 @@ EOF
         "Review this engineering plan file: ${prev}
 
 Your task:
-1. Check for: specificity, testability, parallelizability, completeness, clarity
-2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
-3. If the plan needs improvement, output an IMPROVED version of the COMPLETE plan. CRITICAL: Preserve ALL sections, tasks, and details - do not omit or summarize anything. Only add clarity, fix issues, or expand where needed. (markdown only, no commentary)
+1. Verify the plan contains ALL required sections:
+   - Executive Summary (problem, solution, innovations)
+   - Core Architecture (system diagram, design principles)
+   - Data Models (schemas with types, validation rules)
+   - CLI/API Surface (commands with usage examples)
+   - Error Handling (failure modes, recovery strategies)
+   - Integration Points (dependencies, config management)
+   - Storage & Persistence (directory structure, formats)
+   - Implementation Roadmap (phases, dependencies, S/M/L complexity)
+   - Testing Strategy (unit, integration, test data)
+   - Comparison & Trade-offs (why this approach)
 
-Be strict. Only approve if the plan is truly implementation-ready."; then
+2. Check each section for: specificity (exact file paths, function names), testability, parallelizability
+
+3. If ALL sections present AND implementation-ready, output ONLY: APPROVED
+
+4. If sections are missing or need improvement, output an IMPROVED version of the COMPLETE plan.
+   CRITICAL: Preserve ALL existing content - only add missing sections, clarity, or expand where needed.
+   (markdown only, no commentary)
+
+Be strict. Only approve if the plan is truly implementation-ready with all sections complete."; then
         echo ""
         echo "ERROR: Iteration $i failed!"
         echo "State saved. Restart with: flywheel refine"
@@ -504,21 +520,20 @@ startwork() {
     done
   fi
   
-  # Send prompt to Commit Agent (dedicated Claude pane)
+  
+  # Send commit agent loop to dedicated pane (periodic claude -p)
   if [[ "$commit_agent" == true ]]; then
-    local commit_prompt
-    commit_prompt=$(load_prompt "COMMIT_AGENT")
-    if [[ -n "$commit_prompt" ]]; then
-      note "Sending prompt to Commit Agent pane $pane"
-      tmux send-keys -t "${session}:1.${pane}" "$commit_prompt" Enter
-      # Set pane title so nudge can skip it
+    local commit_prompt_file="$HOME/.config/flywheel/prompts/COMMIT_AGENT_ONESHOT.md"
+    if [[ -f "$commit_prompt_file" ]]; then
+      note "Starting Commit Agent loop in pane $pane (15-min cycles)"
+      local commit_cmd='while true; do echo "=== Commit cycle at $(date) ==="; claude -p "$(cat '"$commit_prompt_file"')" --dangerously-skip-permissions; echo "=== Sleeping 15 min ==="; sleep 900; done'
+      tmux send-keys -t "${session}:1.${pane}" "$commit_cmd" Enter
       tmux select-pane -t "${session}:1.${pane}" -T "commit-agent"
       pane=$((pane + 1))
     else
-      note "Warning: COMMIT_AGENT.md prompt not found"
+      note "Warning: COMMIT_AGENT_ONESHOT.md not found"
     fi
   fi
-  
   # Send prompts to Codex agents (needs delay between text and Enter)
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
@@ -569,10 +584,9 @@ add_commit_agent() {
     die "No session '$session' running. Use 'flywheel startwork' first."
   fi
 
-  local commit_prompt
-  commit_prompt=$(load_prompt "COMMIT_AGENT")
-  if [[ -z "$commit_prompt" ]]; then
-    die "COMMIT_AGENT.md prompt not found at ~/.config/flywheel/prompts/COMMIT_AGENT.md"
+  local commit_prompt_file="$HOME/.config/flywheel/prompts/COMMIT_AGENT_ONESHOT.md"
+  if [[ ! -f "$commit_prompt_file" ]]; then
+    die "COMMIT_AGENT_ONESHOT.md not found at $commit_prompt_file"
   fi
 
   # Get current pane count to determine new pane index
@@ -580,13 +594,17 @@ add_commit_agent() {
   pane_count_before=$(tmux list-panes -t "$session" 2>/dev/null | wc -l)
 
   note "Adding commit agent to session: $session"
-  ntm add "$session" --cc=1 --prompt="$commit_prompt"
-
-  # Set pane title on the newly added pane (last pane)
+  
+  # Add a new pane with shell
+  tmux split-window -t "$session:1" -h
   local new_pane=$((pane_count_before + 1))
-  sleep 1  # Wait for pane to be created
+  sleep 0.5
+  
+  # Send the commit loop command
+  local commit_cmd='while true; do echo "=== Commit cycle at $(date) ==="; claude -p "$(cat '"$commit_prompt_file"')" --dangerously-skip-permissions; echo "=== Sleeping 15 min ==="; sleep 900; done'
+  tmux send-keys -t "${session}:1.${new_pane}" "cd '$root' && $commit_cmd" Enter
   tmux select-pane -t "${session}:1.${new_pane}" -T "commit-agent" 2>/dev/null || true
-  note "Commit Agent added (15-min cycles)"
+  note "Commit Agent added (15-min cycles with claude -p)"
 }
 
 # Add watchdog to an already running session

@@ -144,12 +144,26 @@ synth_prompt_file=$(mktemp)
 cat > "$synth_prompt_file" << SYNTH_HEADER
 You are a principal software architect. You have received $success_count competing implementation plans for the same project.
 
-YOUR TASK: Create ONE MASTER PLAN that:
-1. Takes the BEST ideas from each plan
-2. Resolves contradictions by choosing the superior approach
-3. Fills gaps that individual plans missed
-4. Ensures consistent naming and structure
-5. Optimizes for parallel execution by 3-5 coding agents
+YOUR TASK: Create ONE MASTER PLAN that synthesizes the best ideas from all proposals.
+
+REQUIRED SECTIONS (the plan MUST include ALL of these):
+1. Executive Summary - Problem statement, solution overview, key innovations
+2. Core Architecture - System diagram, design principles, data flow
+3. Data Models - Schemas with types, validation rules, entity relationships
+4. CLI/API Surface - Every command with usage examples and output formats
+5. Error Handling - What can go wrong, recovery strategies, failure modes
+6. Integration Points - External dependencies, secrets handling, config management
+7. Storage & Persistence - Directory structure, file formats, caching
+8. Implementation Roadmap - Phased delivery, dependencies, complexity estimates (S/M/L)
+9. Testing Strategy - Unit tests, integration tests, test data requirements
+10. Comparison & Trade-offs - Why this approach, acknowledged trade-offs
+
+SYNTHESIS GUIDELINES:
+- Take the BEST ideas from each competing plan
+- Resolve contradictions by choosing the superior approach
+- Fill gaps that individual plans missed
+- Be SPECIFIC: exact file paths, function names, data structures
+- Optimize for parallel execution by 3-5 coding agents
 
 CRITICAL: Output ONLY the final synthesized plan in Markdown. No commentary, no comparisons - just the complete implementation plan.
 
