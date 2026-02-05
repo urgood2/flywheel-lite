@@ -160,6 +160,11 @@ init_repo() {
   [[ -f .flywheel/config.env ]] || echo "# Repo-local overrides" > .flywheel/config.env
   note "Initializing Beads..."; bd init 2>/dev/null || true
   bd config set sync.branch beads-sync 2>/dev/null || true
+  # Ensure .beads/ is NOT gitignored (required for sync)
+  if grep -q "^\.beads/$" .gitignore 2>/dev/null; then
+    sed -i "/^\.beads\/$/d" .gitignore
+    note "Removed .beads/ from .gitignore (required for beads sync)"
+  fi
   if [[ ! -f AGENTS.md ]]; then
     cat > AGENTS.md <<'EOF'
 # AGENTS.md
