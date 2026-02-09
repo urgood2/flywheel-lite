@@ -16,7 +16,7 @@ source "$HOME/.config/flywheel/config.env" 2>/dev/null || true
 
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          COMPETITIVE PLAN GENERATION                          ║"
-echo "║   2x Opus + 1x Codex (xhigh) + 1x GPT-5.2 (xhigh)            ║"
+echo "║   2x Opus + 1x Codex (xhigh) + 1x GPT-5.2 (xhigh) + 1x Gemini ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -66,39 +66,44 @@ echo "Context: $context_file ($(wc -c < "$context_file") bytes)"
 echo ""
 
 # Generate plans in parallel - use cat to pipe to commands
-echo "[1/4] Opus #1 generating plan..."
+echo "[1/5] Opus #1 generating plan..."
 cat "$prompt_file" | bash -lc "claude --dangerously-skip-permissions --model opus -p" > planning/competing/opus_1.md 2>&1 &
 pid1=$!
 
-echo "[2/4] Opus #2 generating plan (MVP focus)..."
+echo "[2/5] Opus #2 generating plan (MVP focus)..."
 cat "$mvp_prompt_file" | bash -lc "claude --dangerously-skip-permissions --model opus -p" > planning/competing/opus_2.md 2>&1 &
 pid2=$!
 
-echo "[3/4] Codex (xhigh reasoning) generating plan..."
+echo "[3/5] Codex (xhigh reasoning) generating plan..."
 cat "$prompt_file" | bash -lc "codex exec --model gpt-5.2-codex --config model_reasoning_effort="xhigh" \
   --output-last-message planning/competing/codex_xhigh.md -" > /dev/null 2>&1 &
 pid3=$!
 
-echo "[4/4] GPT-5.2 (xhigh reasoning) generating plan..."
+echo "[4/5] GPT-5.2 (xhigh reasoning) generating plan..."
 cat "$prompt_file" | bash -lc "codex exec --model gpt-5.2 --config model_reasoning_effort="xhigh" \
   --output-last-message planning/competing/gpt52_xhigh.md -" > /dev/null 2>&1 &
 pid4=$!
 
+echo "[5/5] Gemini 2.5 Pro generating plan..."
+cat "$prompt_file" | bash -lc "gemini -m gemini-2.5-pro -o text" > planning/competing/gemini_pro.md 2>&1 &
+pid5=$!
+
 echo ""
-echo "All 4 plan generations started:"
+echo "All 5 plan generations started:"
 echo "  Opus #1:       PID $pid1"
 echo "  Opus #2:       PID $pid2"  
 echo "  Codex xhigh:   PID $pid3"
 echo "  GPT-5.2 xhigh: PID $pid4"
+echo "  Gemini Pro:    PID $pid5"
 echo ""
 echo "Waiting for completion (5-15 minutes)..."
 echo ""
 
 # Wait with progress
-while kill -0 $pid1 2>/dev/null || kill -0 $pid2 2>/dev/null || kill -0 $pid3 2>/dev/null || kill -0 $pid4 2>/dev/null; do
+while kill -0 $pid1 2>/dev/null || kill -0 $pid2 2>/dev/null || kill -0 $pid3 2>/dev/null || kill -0 $pid4 2>/dev/null || kill -0 $pid5 2>/dev/null; do
   sleep 15
   sizes=""
-  for f in opus_1 opus_2 codex_xhigh gpt52_xhigh; do
+  for f in opus_1 opus_2 codex_xhigh gpt52_xhigh gemini_pro; do
     if [[ -f "planning/competing/${f}.md" ]]; then
       s=$(wc -c < "planning/competing/${f}.md" 2>/dev/null || echo 0)
       sizes="$sizes ${f}:${s}"
@@ -114,7 +119,7 @@ rm -f "$prompt_file" "$mvp_prompt_file"
 # Check results
 echo "=== Plan Generation Results ==="
 success_count=0
-for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md gemini_pro.md; do
   path="planning/competing/$f"
   if [[ -f "$path" ]] && [[ $(wc -c < "$path") -gt 1000 ]]; then
     echo "  ✓ $f: $(wc -c < "$path") bytes"
@@ -128,7 +133,7 @@ echo ""
 if [[ $success_count -lt 2 ]]; then
   echo "ERROR: Only $success_count plans generated. Need at least 2 for synthesis."
   echo "Check individual plan files for errors:"
-  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md gemini_pro.md; do
     echo "  --- $f ---"
     head -20 "planning/competing/$f" 2>/dev/null || echo "  (missing)"
   done
@@ -169,7 +174,7 @@ CRITICAL: Output ONLY the final synthesized plan in Markdown. No commentary, no 
 
 SYNTH_HEADER
 
-for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md gemini_pro.md; do
   path="planning/competing/$f"
   if [[ -f "$path" ]] && [[ $(wc -c < "$path") -gt 1000 ]]; then
     name=$(echo "$f" | sed "s/.md//" | tr "_" " " | tr "[:lower:]" "[:upper:]")
@@ -204,7 +209,7 @@ if cat "$synth_prompt_file" | bash -lc "codex exec --model gpt-5.2 \
   echo "╚════════════════════════════════════════════════════════════════╝"
   echo ""
   echo "Input plans:"
-  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md; do
+  for f in opus_1.md opus_2.md codex_xhigh.md gpt52_xhigh.md gemini_pro.md; do
     [[ -f "planning/competing/$f" ]] && echo "  planning/competing/$f: $(wc -c < "planning/competing/$f") bytes"
   done
   echo ""

@@ -134,6 +134,15 @@ doctor() {
   for cmd in git tmux ntm bd bv apr ubs claude codex gemini; do require_cmd "$cmd"; done
   note "Running: ntm deps -v"
   ntm deps -v
+  note "Checking Agent Mail MCP server..."
+  if curl -sf http://127.0.0.1:8765/mcp/ -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"ping","id":1}' >/dev/null 2>&1; then
+    note "OK: Agent Mail MCP server reachable"
+    am list-projects 2>/dev/null | head -5
+  else
+    note "WARNING: Agent Mail MCP server not reachable at http://127.0.0.1:8765/mcp/"
+    note "  Agents will not be able to use file reservations or messaging"
+  fi
   note "OK: toolchain present."
 }
 
@@ -160,6 +169,9 @@ init_repo() {
   [[ -f .flywheel/config.env ]] || echo "# Repo-local overrides" > .flywheel/config.env
   note "Initializing Beads..."; bd init 2>/dev/null || true
   bd config set sync.branch beads-sync 2>/dev/null || true
+  # Install Agent Mail git pre-commit guard (prevents commits on reserved files)
+  note "Installing Agent Mail guard..."
+  am guard install "$root" 2>/dev/null && note "Agent Mail guard installed" || note "Warning: Agent Mail guard not installed (am not available or server down)"
   # Ensure .beads/ is NOT gitignored (required for sync)
   if grep -q "^\.beads/$" .gitignore 2>/dev/null; then
     sed -i "/^\.beads\/$/d" .gitignore
@@ -464,7 +476,16 @@ startwork() {
     esac
   done
   cd "$root"
-  
+
+  # Verify Agent Mail MCP server is healthy before spawning agents
+  if curl -sf http://127.0.0.1:8765/mcp/ -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"ping","id":1}' >/dev/null 2>&1; then
+    note "Agent Mail MCP server: OK"
+  else
+    note "WARNING: Agent Mail MCP not reachable - agents cannot coordinate file reservations"
+    note "  Start with: cd ~/mcp_agent_mail && uv run python -m mcp_agent_mail.cli serve-http &"
+  fi
+
   # Calculate total agents (add 1 if commit agent enabled)
   local total_cc="$cc_n"
   [[ "$commit_agent" == true ]] && total_cc=$((cc_n + 1))
@@ -831,7 +852,7 @@ compete_plans() {
   note "Starting competitive planning: $session"
   note "Context: $context_file ($(wc -c < "$context_file") bytes)"
   note ""
-  note "Generates 4 competing plans (2x Opus, 1x Codex xhigh, 1x GPT-5.2 xhigh)"
+  note "Generates 5 competing plans (2x Opus, 1x Codex xhigh, 1x GPT-5.2 xhigh, 1x Gemini Pro)"
   note "then synthesizes with GPT-5.2 Pro (xhigh reasoning)."
   note ""
   note "Detach: Ctrl+B D | Reattach: flywheel attach"
