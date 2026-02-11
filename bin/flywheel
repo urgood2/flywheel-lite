@@ -61,9 +61,9 @@ load_config() {
   [[ -f "$HOME/.config/flywheel/config.env" ]] && source "$HOME/.config/flywheel/config.env"
   [[ -n "$repo_root" && -f "$repo_root/.flywheel/config.env" ]] && source "$repo_root/.flywheel/config.env"
   : "${FW_INTERVIEW_ROUNDS:=2}" "${FW_PLAN_ITERS:=3}" "${FW_CC:=3}" "${FW_COD:=2}" "${FW_GMI:=1}"
-  : "${FW_CLAUDE_MODEL:=opus}" "${FW_CODEX_IMPL_MODEL:=gpt-5.3-codex}" "${FW_GPT_PLAN_MODEL:=gpt-5.3}"
+  : "${FW_CLAUDE_MODEL:=opus}" "${FW_CODEX_IMPL_MODEL:=gpt-5.3-codex}" "${FW_CODEX_COMMIT_MODEL:=gpt-5.2-codex}" "${FW_GPT_PLAN_MODEL:=gpt-5.3}"
   : "${FW_CODEX_REASONING:=high}" "${FW_GEMINI_MODEL:=gemini-2.5-pro}" "${FW_SAFE:=0}"
-  : "${FW_COMMIT:=true}" "${FW_WATCHDOG:=true}" "${FW_WATCHDOG_INTERVAL:=120}"
+  : "${FW_COMMIT:=true}" "${FW_WATCHDOG:=true}" "${FW_WATCHDOG_INTERVAL:=120}" "${FW_REVIEW_NUDGE_INTERVAL:=900}"
 }
 
 git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
@@ -455,6 +455,46 @@ Then say BEADS_COMPLETE."
   smart_attach "$session"
 }
 
+# Spawn terminal-based commit loop (non-interactive Codex one-shot every 15 minutes).
+spawn_commit_loop_pane() {
+  local session="$1" root="$2"
+  local prompt_file="$HOME/.config/flywheel/prompts/COMMIT_AGENT_ONESHOT.md"
+  [[ -f "$prompt_file" ]] || prompt_file="$HOME/.config/flywheel/prompts/COMMIT_AGENT.md"
+  [[ -f "$prompt_file" ]] || die "Commit prompt not found at ~/.config/flywheel/prompts/COMMIT_AGENT_ONESHOT.md or COMMIT_AGENT.md"
+
+  if tmux list-panes -t "$session" -F '#{pane_title}' 2>/dev/null | grep -qi "commit"; then
+    note "Commit loop pane already exists in session: $session"
+    return 0
+  fi
+
+  local loop_script="/tmp/flywheel-commit-loop-${session}.sh"
+  cat > "$loop_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$root"
+PROMPT_FILE="$prompt_file"
+MODEL="${FW_CODEX_COMMIT_MODEL}"
+while true; do
+  echo "=== COMMIT CYCLE \$(date) ==="
+  if [[ ! -f "\$PROMPT_FILE" ]]; then
+    echo "ERROR: prompt file missing: \$PROMPT_FILE"
+  else
+    if ! codex exec --dangerously-bypass-approvals-and-sandbox --model "\$MODEL" --config model_reasoning_effort="high" - < "\$PROMPT_FILE"; then
+      echo "Commit cycle failed (non-zero exit); continuing."
+    fi
+  fi
+  echo "=== DONE. Sleeping 15m ==="
+  sleep 900
+done
+EOF
+  chmod +x "$loop_script"
+
+  local new_pane
+  new_pane=$(tmux split-window -t "${session}:1" -c "$root" -d -P -F "#{pane_index}" "$loop_script")
+  tmux select-pane -t "${session}:1.${new_pane}" -T "commit-loop" 2>/dev/null || true
+  note "Commit loop started in pane ${new_pane} (Codex: ${FW_CODEX_COMMIT_MODEL})"
+}
+
 # New startwork function with commit agent support
 startwork() {
   local root; root="$(git_root)" || die "Not in a git repo."
@@ -486,9 +526,8 @@ startwork() {
     note "  Start with: cd ~/mcp_agent_mail && uv run python -m mcp_agent_mail.cli serve-http &"
   fi
 
-  # Calculate total agents (add 1 if commit agent enabled)
+  # Calculate totals. Commit agent now runs on Codex (not Claude).
   local total_cc="$cc_n"
-  [[ "$commit_agent" == true ]] && total_cc=$((cc_n + 1))
   
   local args=()
   [[ "$total_cc" -gt 0 ]] && args+=(--cc="$total_cc")
@@ -506,11 +545,12 @@ startwork() {
   
   # Add agents using ntm add (works with existing session)
   [[ "$total_cc" -gt 0 ]] && ntm add "$session" --cc="$total_cc"
-  [[ "$cod_n" -gt 0 ]] && ntm add "$session" --cod="$cod_n"
+  [[ "$cod_n" -gt 0 ]] && ntm add "$session" --cod="${cod_n}:${FW_CODEX_IMPL_MODEL}"
   [[ "$gmi_n" -gt 0 ]] && ntm add "$session" --gmi="$gmi_n"
   sleep 3
   
-  # Pane layout: 1=shell, 2..(cc_n+1)=Claude workers, then commit agent if enabled
+  # Pane layout: 1=shell, then agent panes in order: Claude, Codex, Gemini.
+  # Commit loop is spawned as a separate terminal process after agents.
   local pane=2
   
   # Send prompts to Claude worker agents (panes 2 to cc_n+1)
@@ -523,21 +563,6 @@ startwork() {
       sleep 0.5
       pane=$((pane + 1))
     done
-  fi
-  
-  # Send prompt to Commit Agent (dedicated Claude pane)
-  if [[ "$commit_agent" == true ]]; then
-    local commit_prompt
-    commit_prompt=$(load_prompt "COMMIT_AGENT")
-    if [[ -n "$commit_prompt" ]]; then
-      note "Sending prompt to Commit Agent pane $pane"
-      tmux send-keys -t "${session}:1.${pane}" "$commit_prompt" Enter
-      # Set pane title so nudge can skip it
-      tmux select-pane -t "${session}:1.${pane}" -T "commit-agent"
-      pane=$((pane + 1))
-    else
-      note "Warning: COMMIT_AGENT.md prompt not found"
-    fi
   fi
   
   # Send prompts to Codex agents (needs delay between text and Enter)
@@ -569,7 +594,8 @@ startwork() {
   fi
   
   if [[ "$commit_agent" == true ]]; then
-    note "Commit Agent running in dedicated pane (15-min cycles)"
+    spawn_commit_loop_pane "$session" "$root"
+    note "Commit loop running in dedicated pane (15-min cycles)"
   fi
 
   # Start watchdog in pane 1 (shell pane) to auto-nudge idle agents
@@ -584,30 +610,15 @@ startwork() {
 # Add commit agent to an already running session
 add_commit_agent() {
   local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
   local session; session="$(sanitize_session_name "$(basename "$root")")"
 
   if ! tmux has-session -t "$session" 2>/dev/null; then
     die "No session '$session' running. Use 'flywheel startwork' first."
   fi
 
-  local commit_prompt
-  commit_prompt=$(load_prompt "COMMIT_AGENT")
-  if [[ -z "$commit_prompt" ]]; then
-    die "COMMIT_AGENT.md prompt not found at ~/.config/flywheel/prompts/COMMIT_AGENT.md"
-  fi
-
-  # Get current pane count to determine new pane index
-  local pane_count_before
-  pane_count_before=$(tmux list-panes -t "$session" 2>/dev/null | wc -l)
-
-  note "Adding commit agent to session: $session"
-  ntm add "$session" --cc=1 --prompt="$commit_prompt"
-
-  # Set pane title on the newly added pane (last pane)
-  local new_pane=$((pane_count_before + 1))
-  sleep 1  # Wait for pane to be created
-  tmux select-pane -t "${session}:1.${new_pane}" -T "commit-agent" 2>/dev/null || true
-  note "Commit Agent added (15-min cycles)"
+  note "Adding commit loop to session: $session"
+  spawn_commit_loop_pane "$session" "$root"
 }
 
 # Add watchdog to an already running session
@@ -716,26 +727,34 @@ is_pane_idle() {
   local output
   output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -15 2>/dev/null) || return 1
   
-  # Check for active work indicators first (not idle)
-  if echo "$output" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing)" 2>/dev/null; then
+  # Check for active work indicators in the LAST 3 LINES only
+  # (checking the full buffer causes false positives on historical output)
+  local recent
+  recent=$(echo "$output" | grep -v "^[[:space:]]*$" | tail -3)
+  if echo "$recent" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing)" 2>/dev/null; then
     return 1  # Working
   fi
   
-  # Claude idle patterns
+  # Claude idle patterns - conversational
   if echo "$output" | grep -qiE "(next steps|what.*should|shall i|want me to|waiting for|please confirm|let me know|ready to|can i help)" 2>/dev/null; then
     return 0  # Idle
   fi
   
-  # Codex idle patterns - prompt waiting for input
-  # Codex shows "› " when waiting for input, and "context left" in status
-  if echo "$output" | grep -qE "^› |context left\$|% context" 2>/dev/null; then
-    # Check if last non-empty line is a prompt or status line
-    local last_content
-    last_content=$(echo "$output" | grep -v "^[[:space:]]*\$" | tail -3)
-    # If we see the prompt character and no active spinner/work, its idle
-    if echo "$last_content" | grep -qE "^› |context left|Worked for [0-9]+s" 2>/dev/null; then
-      return 0  # Idle - Codex at prompt
-    fi
+  # Claude Code idle - at the input prompt (❯ character on last content line)
+  local last_cc_line
+  last_cc_line=$(echo "$output" | grep -v "^[[:space:]]*$" | tail -1)
+  if echo "$last_cc_line" | grep -qE "bypass permissions|shift.tab to cycle" 2>/dev/null; then
+    return 0  # Idle - Claude Code at input prompt
+  fi
+  
+  # Codex idle patterns - only idle when showing the input prompt "› "
+  # NOTE: "% context" and "context left" appear in the status bar at ALL times
+  # (including while actively working), so we must NOT match on those.
+  # Check last few lines for the prompt or shortcuts hint (may have leading spaces).
+  local codex_tail
+  codex_tail=$(echo "$output" | grep -v "^[[:space:]]*\$" | tail -3)
+  if echo "$codex_tail" | grep -qE "› |\? for shortcuts" 2>/dev/null; then
+    return 0  # Idle - Codex at input prompt
   fi
   
   # Gemini idle patterns
@@ -751,6 +770,10 @@ nudge_agents() {
   load_config "$root"
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   local force=false
+  local now_ts
+  now_ts=$(date +%s)
+  local review_nudge_dir="$HOME/.cache/flywheel/review-nudges"
+  mkdir -p "$review_nudge_dir"
   [[ "${1:-}" == "--force" ]] && force=true
   
   note "Checking agents in session: $session"
@@ -761,32 +784,59 @@ nudge_agents() {
     local pane_title
     pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
 
-    # Skip commit agent - it runs on its own 15-min cycle
+    # Skip commit agent - it runs on its own cycle
     if [[ "$pane_title" == *"commit"* ]]; then
       note "  Skipping pane $pane - commit agent (autonomous)"
       skipped=$((skipped + 1))
       continue
-
-    # Skip review agent - detect by pane output content (Claude overwrites pane titles)
-    local pane_output
-    pane_output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -50 2>/dev/null) || pane_output=""
-    if [[ "$pane_output" == *"REVIEW_AGENT"* ]] || [[ "$pane_output" == *"review closed beads"* ]] || [[ "$pane_output" == *"Read-Only Code Reviewer"* ]]; then
-      note "  Skipping pane $pane - review agent (detected by output)"
-      skipped=$((skipped + 1))
-      continue
     fi
+
+    # Detect review agent by title or output content
+    local is_review=false
+    if [[ "${pane_title,,}" == *"review"* ]]; then
+      is_review=true
+    fi
+    if [[ "$is_review" == false ]]; then
+      local pane_output
+      pane_output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -50 2>/dev/null) || pane_output=""
+      if [[ "$pane_output" == *"REVIEW_AGENT"* ]] || [[ "$pane_output" == *"review closed beads"* ]] || [[ "$pane_output" == *"Read-Only Code Reviewer"* ]]; then
+        is_review=true
+      fi
     fi
 
     if [[ "$force" == true ]] || is_pane_idle "$session" "$pane"; then
+      # Throttle reviewer nudges so review prompts are not spammed every watchdog cycle.
+      if [[ "$is_review" == true ]] && [[ "$force" != true ]]; then
+        local review_stamp_file="${review_nudge_dir}/${session}-pane${pane}.ts"
+        local last_review_nudge=0
+        if [[ -f "$review_stamp_file" ]]; then
+          last_review_nudge=$(cat "$review_stamp_file" 2>/dev/null || echo 0)
+        fi
+        if [[ "$last_review_nudge" =~ ^[0-9]+$ ]]; then
+          local review_elapsed=$((now_ts - last_review_nudge))
+          if (( review_elapsed < FW_REVIEW_NUDGE_INTERVAL )); then
+            local review_wait=$((FW_REVIEW_NUDGE_INTERVAL - review_elapsed))
+            note "  Skipping pane $pane - review cooldown (${review_wait}s left)"
+            skipped=$((skipped + 1))
+            continue
+          fi
+        fi
+      fi
+
       note "  Nudging pane $pane ($pane_title)"
       # Different nudge messages based on agent type
-      local nudge_msg="CONTINUE. Pick up a task with bv --robot-next and implement it completely."
-      if [[ "$pane_title" == *"cod"* ]]; then
-        nudge_msg="You are an autonomous coding agent. Run: bv --robot-next to get your task, then implement it fully. Do NOT wait for confirmation - just code."
+      local nudge_msg="CONTINUE. Run: bd ready | head -5 to find a task, then claim it with bd update <ID> --status in_progress and implement it."
+      if [[ "$is_review" == true ]]; then
+        nudge_msg="CONTINUE reviewing. Run: br list --status=closed | head -10 to find recently closed beads, then review them. Create beads for any issues found. Do NOT edit files."
+      elif [[ "$pane_title" == *"cod"* ]]; then
+        nudge_msg="You are an autonomous coding agent. Run: bd ready | head -5 to pick a task, then bd update <ID> --status in_progress to claim it, then implement it fully. Do NOT wait for confirmation - just code."
       fi
       tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
       tmux send-keys -t "${session}:1.${pane}" Enter
+      if [[ "$is_review" == true ]]; then
+        echo "$now_ts" > "${review_nudge_dir}/${session}-pane${pane}.ts"
+      fi
       sleep 0.2
       nudged=$((nudged + 1))
     else
