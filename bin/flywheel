@@ -742,10 +742,10 @@ is_pane_idle() {
   local output
   output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -15 2>/dev/null) || return 1
 
-  # Check for active work indicators in the LAST 3 non-empty lines only.
+  # Check recent pane output for active work indicators.
   local recent
-  recent=$(echo "$output" | sed '/^[[:space:]]*$/d' | tail -3)
-  if echo "$recent" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing|esc to interrupt)" 2>/dev/null; then
+  recent=$(echo "$output" | sed '/^[[:space:]]*$/d' | tail -12)
+  if echo "$recent" | grep -qiE "(Running PreToolUse hooks|Running\\.\\.\\.|Running…|Waiting\\.\\.\\.|Waiting…|Contemplating|Perambulating|Thinking|Analyzing|Processing|Searching|Reading|Writing|Executing|esc to interrupt)" 2>/dev/null; then
     return 1  # Working
   fi
 
