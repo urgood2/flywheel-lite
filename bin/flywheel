@@ -556,7 +556,7 @@ startwork() {
   # Send prompts to Claude worker agents (panes 2 to cc_n+1)
   if [[ "$cc_n" -gt 0 ]]; then
     local cc_prompt
-    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: bv --robot-next")
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: Pick task via fallback chain: (1) bd list --ready --limit 5; (2) if none, bv --robot-next and use claim_command; (3) bd update <ID> --status in_progress, then implement.")
     for i in $(seq 1 "$cc_n"); do
       note "Sending prompt to Claude Worker pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cc_prompt" Enter
@@ -568,7 +568,7 @@ startwork() {
   # Send prompts to Codex agents (needs delay between text and Enter)
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
-    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: bv --robot-next")
+    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: Pick task via fallback chain: (1) bd list --ready --limit 5; (2) if none, bv --robot-next and use claim_command; (3) bd update <ID> --status in_progress, then implement.")
     for i in $(seq 1 "$cod_n"); do
       note "Sending prompt to Codex pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cod_prompt"
@@ -582,7 +582,7 @@ startwork() {
   # Send prompts to Gemini agents (needs delay between text and Enter)
   if [[ "$gmi_n" -gt 0 ]]; then
     local gmi_prompt
-    gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer. START: bv --robot-next")
+    gmi_prompt=$(build_agent_prompt "gemini" "AGENT ROLE: Reviewer. START: Pick review target via fallback chain: (1) bd list --ready --limit 5; (2) if none, bv --robot-next; review claimed/closed work appropriately.")
     for i in $(seq 1 "$gmi_n"); do
       note "Sending prompt to Gemini pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$gmi_prompt"
@@ -825,11 +825,11 @@ nudge_agents() {
 
       note "  Nudging pane $pane ($pane_title)"
       # Different nudge messages based on agent type
-      local nudge_msg="CONTINUE. Run: bd ready | head -5 to find a task, then claim it with bd update <ID> --status in_progress and implement it."
+      local nudge_msg="CONTINUE. Task pickup fallback chain: run bd list --ready --limit 5; if empty, run bv --robot-next and execute its claim_command. Then implement the claimed task."
       if [[ "$is_review" == true ]]; then
         nudge_msg="CONTINUE reviewing. Run: br list --status=closed | head -10 to find recently closed beads, then review them. Create beads for any issues found. Do NOT edit files."
       elif [[ "$pane_title" == *"cod"* ]]; then
-        nudge_msg="You are an autonomous coding agent. Run: bd ready | head -5 to pick a task, then bd update <ID> --status in_progress to claim it, then implement it fully. Do NOT wait for confirmation - just code."
+        nudge_msg="You are an autonomous coding agent. Use fallback chain: run bd list --ready --limit 5; if empty, run bv --robot-next and execute its claim_command; then implement fully. Do NOT wait for confirmation - just code."
       fi
       tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
