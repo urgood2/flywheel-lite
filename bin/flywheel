@@ -567,7 +567,7 @@ startwork() {
   # Send prompts to Claude worker agents (panes 2 to cc_n+1)
   if [[ "$cc_n" -gt 0 ]]; then
     local cc_prompt
-    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if no ready tasks exist, do NOT claim epics via bv --robot-next; document blockers and stop.")
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if none, run bd ready --type bug --limit 10 and claim one with bd update <ID> --status in_progress; (4) if no ready task/bug exists, do NOT claim epics via bv --robot-next; document blockers and stop.")
     for i in $(seq 1 "$cc_n"); do
       note "Sending prompt to Claude Worker pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cc_prompt" Enter
@@ -579,7 +579,7 @@ startwork() {
   # Send prompts to Codex agents (needs delay between text and Enter)
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
-    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if no ready tasks exist, do NOT claim epics via bv --robot-next; document blockers and stop.")
+    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if none, run bd ready --type bug --limit 10 and claim one with bd update <ID> --status in_progress; (4) if no ready task/bug exists, do NOT claim epics via bv --robot-next; document blockers and stop.")
     for i in $(seq 1 "$cod_n"); do
       note "Sending prompt to Codex pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cod_prompt"
@@ -839,11 +839,11 @@ nudge_agents() {
 
       note "  Nudging pane $pane ($pane_title)"
       # Different nudge messages based on agent type
-      local nudge_msg="CONTINUE. Task selection order: run bd list --status in_progress --type task --limit 10 and continue one; if none run bd ready --type task --limit 10 and claim one. Do NOT claim epics via bv --robot-next."
+      local nudge_msg="CONTINUE. Task selection order: run bd list --status in_progress --type task --limit 10 and continue one; if none run bd ready --type task --limit 10 and claim one; if still none run bd ready --type bug --limit 10 and claim one. Do NOT claim epics via bv --robot-next."
       if [[ "$is_review" == true ]]; then
         nudge_msg="CONTINUE reviewing. Run: br list --status=closed | head -10 to find recently closed beads, then review them. Create beads for any issues found. Do NOT edit files."
       elif [[ "$pane_title" == *"cod"* ]]; then
-        nudge_msg="You are an autonomous coding agent. Run bd list --status in_progress --type task --limit 10 and continue one task. If none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress. Do NOT claim epics via bv --robot-next. Do NOT wait for confirmation - just code."
+        nudge_msg="You are an autonomous coding agent. Run bd list --status in_progress --type task --limit 10 and continue one task. If none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress. If still none, run bd ready --type bug --limit 10 and claim one with bd update <ID> --status in_progress. Do NOT claim epics via bv --robot-next. Do NOT wait for confirmation - just code."
       fi
       tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
