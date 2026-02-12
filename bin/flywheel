@@ -517,6 +517,17 @@ startwork() {
   done
   cd "$root"
 
+  # Safety: prevent shared-state runs from git worktrees unless explicitly allowed.
+  if is_worktree && [[ "${FW_ALLOW_WORKTREE:-0}" != "1" ]]; then
+    die "Refusing to run in git worktree: $root. Use an independent clone to avoid shared Beads DB state. Override only if intentional: FW_ALLOW_WORKTREE=1"
+  fi
+
+  # Safety: require Beads DB to live inside this repo.
+  local fw_db_path
+  fw_db_path=$(bd info 2>/dev/null | sed -n "s/^Database: //p" | head -n1)
+  [[ -n "$fw_db_path" ]] || die "Could not determine Beads DB path. Run: bd init --force --from-jsonl"
+  [[ "$fw_db_path" == "$root/.beads/"* || "$fw_db_path" == "$root/.beads/beads.db" ]] || die "Unsafe Beads DB path: $fw_db_path (outside repo). Re-initialize local DB: bd init --force --from-jsonl"
+
   # Verify Agent Mail MCP server is healthy before spawning agents
   if curl -sf http://127.0.0.1:8765/mcp/ -X POST -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"ping","id":1}' >/dev/null 2>&1; then
@@ -556,7 +567,7 @@ startwork() {
   # Send prompts to Claude worker agents (panes 2 to cc_n+1)
   if [[ "$cc_n" -gt 0 ]]; then
     local cc_prompt
-    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: Pick task via fallback chain: (1) bd list --ready --limit 5; (2) if none, bv --robot-next and use claim_command; (3) bd update <ID> --status in_progress, then implement.")
+    cc_prompt=$(build_agent_prompt "claude" "AGENT ROLE: Architect/Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if no ready tasks exist, do NOT claim epics via bv --robot-next; document blockers and stop.")
     for i in $(seq 1 "$cc_n"); do
       note "Sending prompt to Claude Worker pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cc_prompt" Enter
@@ -568,7 +579,7 @@ startwork() {
   # Send prompts to Codex agents (needs delay between text and Enter)
   if [[ "$cod_n" -gt 0 ]]; then
     local cod_prompt
-    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: Pick task via fallback chain: (1) bd list --ready --limit 5; (2) if none, bv --robot-next and use claim_command; (3) bd update <ID> --status in_progress, then implement.")
+    cod_prompt=$(build_agent_prompt "codex" "AGENT ROLE: Implementer. START: Task selection order: (1) bd list --status in_progress --type task --limit 10 and continue one; (2) if none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress; (3) if no ready tasks exist, do NOT claim epics via bv --robot-next; document blockers and stop.")
     for i in $(seq 1 "$cod_n"); do
       note "Sending prompt to Codex pane $pane"
       tmux send-keys -t "${session}:1.${pane}" "$cod_prompt"
@@ -601,7 +612,9 @@ startwork() {
   # Start watchdog in pane 1 (shell pane) to auto-nudge idle agents
   if [[ "$watchdog" == "true" ]]; then
     note "Starting watchdog (nudge every ${FW_WATCHDOG_INTERVAL}s)"
-    tmux send-keys -t "${session}:1.1" "flywheel-watchdog '$session' '$FW_WATCHDOG_INTERVAL'" Enter
+    local watchdog_cmd="flywheel-watchdog '$session' '$FW_WATCHDOG_INTERVAL'"
+    [[ "${FW_COMPLETE_ALL_STATUSES:-0}" == "1" ]] && watchdog_cmd="FW_COMPLETE_ALL_STATUSES=1 ${watchdog_cmd}"
+    tmux send-keys -t "${session}:1.1" "$watchdog_cmd" Enter
   fi
 
   note "Attach: ntm attach $session"
@@ -639,7 +652,9 @@ add_watchdog() {
   fi
 
   note "Starting watchdog in session: $session (interval: ${interval}s)"
-  tmux send-keys -t "${session}:1.1" "flywheel-watchdog '$session' '$interval'" Enter
+  local watchdog_cmd="flywheel-watchdog '$session' '$interval'"
+  [[ "${FW_COMPLETE_ALL_STATUSES:-0}" == "1" ]] && watchdog_cmd="FW_COMPLETE_ALL_STATUSES=1 ${watchdog_cmd}"
+  tmux send-keys -t "${session}:1.1" "$watchdog_cmd" Enter
   note "Watchdog started"
 }
 
@@ -726,42 +741,41 @@ is_pane_idle() {
   local session="$1" pane="$2"
   local output
   output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -15 2>/dev/null) || return 1
-  
-  # Check for active work indicators in the LAST 3 LINES only
-  # (checking the full buffer causes false positives on historical output)
+
+  # Check for active work indicators in the LAST 3 non-empty lines only.
   local recent
-  recent=$(echo "$output" | grep -v "^[[:space:]]*$" | tail -3)
-  if echo "$recent" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing)" 2>/dev/null; then
+  recent=$(echo "$output" | sed '/^[[:space:]]*$/d' | tail -3)
+  if echo "$recent" | grep -qE "(Running|Executing|Writing|Reading|Searching|Thinking|Analyzing|Processing|esc to interrupt)" 2>/dev/null; then
     return 1  # Working
   fi
-  
-  # Claude idle patterns - conversational
+
+  # Claude idle patterns - conversational.
   if echo "$output" | grep -qiE "(next steps|what.*should|shall i|want me to|waiting for|please confirm|let me know|ready to|can i help)" 2>/dev/null; then
     return 0  # Idle
   fi
-  
-  # Claude Code idle - at the input prompt (❯ character on last content line)
+
+  # Claude Code idle - at the input prompt.
   local last_cc_line
-  last_cc_line=$(echo "$output" | grep -v "^[[:space:]]*$" | tail -1)
+  last_cc_line=$(echo "$output" | sed '/^[[:space:]]*$/d' | tail -1)
   if echo "$last_cc_line" | grep -qE "bypass permissions|shift.tab to cycle" 2>/dev/null; then
     return 0  # Idle - Claude Code at input prompt
   fi
-  
-  # Codex idle patterns - only idle when showing the input prompt "› "
-  # NOTE: "% context" and "context left" appear in the status bar at ALL times
-  # (including while actively working), so we must NOT match on those.
-  # Check last few lines for the prompt or shortcuts hint (may have leading spaces).
-  local codex_tail
-  codex_tail=$(echo "$output" | grep -v "^[[:space:]]*\$" | tail -3)
-  if echo "$codex_tail" | grep -qE "› |\? for shortcuts" 2>/dev/null; then
+
+  # Codex idle detection:
+  # idle only when we see a prompt line paired with the shortcuts status line.
+  local codex_last_two codex_prompt_line codex_status_line
+  codex_last_two=$(echo "$output" | sed '/^[[:space:]]*$/d' | tail -2)
+  codex_prompt_line=$(echo "$codex_last_two" | head -1)
+  codex_status_line=$(echo "$codex_last_two" | tail -1)
+  if echo "$codex_prompt_line" | grep -qE "^[[:space:]]*› " 2>/dev/null && echo "$codex_status_line" | grep -qE "\? for shortcuts" 2>/dev/null; then
     return 0  # Idle - Codex at input prompt
   fi
-  
-  # Gemini idle patterns
+
+  # Gemini idle patterns.
   if echo "$output" | grep -qiE "(i can help|would you like|let me know|ready for)" 2>/dev/null; then
     return 0  # Idle
   fi
-  
+
   return 1  # Assume working by default
 }
 
@@ -825,11 +839,11 @@ nudge_agents() {
 
       note "  Nudging pane $pane ($pane_title)"
       # Different nudge messages based on agent type
-      local nudge_msg="CONTINUE. Task pickup fallback chain: run bd list --ready --limit 5; if empty, run bv --robot-next and execute its claim_command. Then implement the claimed task."
+      local nudge_msg="CONTINUE. Task selection order: run bd list --status in_progress --type task --limit 10 and continue one; if none run bd ready --type task --limit 10 and claim one. Do NOT claim epics via bv --robot-next."
       if [[ "$is_review" == true ]]; then
         nudge_msg="CONTINUE reviewing. Run: br list --status=closed | head -10 to find recently closed beads, then review them. Create beads for any issues found. Do NOT edit files."
       elif [[ "$pane_title" == *"cod"* ]]; then
-        nudge_msg="You are an autonomous coding agent. Use fallback chain: run bd list --ready --limit 5; if empty, run bv --robot-next and execute its claim_command; then implement fully. Do NOT wait for confirmation - just code."
+        nudge_msg="You are an autonomous coding agent. Run bd list --status in_progress --type task --limit 10 and continue one task. If none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress. Do NOT claim epics via bv --robot-next. Do NOT wait for confirmation - just code."
       fi
       tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
