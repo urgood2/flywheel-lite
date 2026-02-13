@@ -274,8 +274,12 @@ $(cat "$PREFLIGHT_FILE")"
     else
         echo -e "${YELLOW}⚠ Could not auto-copy to clipboard.${NC}"
     fi
-    # Always show fallback command
-    echo -e "  ${CYAN}Fallback (run locally):${NC} ssh vps \"cat $CURRENT_PLAN\" | pbcopy"
+    # Always show fallback command (absolute path so remote cwd does not matter)
+    local_plan_path="$CURRENT_PLAN"
+    [[ "$local_plan_path" != /* ]] && local_plan_path="$PROJECT_DIR/$local_plan_path"
+    local_plan_path="$(realpath "$local_plan_path" 2>/dev/null || echo "$local_plan_path")"
+    : "${FW_PLANPRO_FALLBACK_SSH_HOST:=vps}"
+    echo -e "  ${CYAN}Fallback (run locally):${NC} ssh ${FW_PLANPRO_FALLBACK_SSH_HOST} \"cat '$local_plan_path'\" | pbcopy"
     echo
 
     # Show the prompt visually (in case clipboard fails or for reference)
