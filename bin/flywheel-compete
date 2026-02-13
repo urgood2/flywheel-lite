@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
 # Competitive Plan Generation
 # Uses: 2x Opus, 1x Codex (xhigh), 1x GPT-5.2 (xhigh)
 # Then synthesizes with GPT-5.2 Pro (xhigh)
@@ -14,6 +16,12 @@ root=$(pwd)
 # Load config
 source "$HOME/.config/flywheel/config.env" 2>/dev/null || true
 
+# Ensure shared brownfield preflight exists (cached).
+if command -v flywheel-brownfield-preflight >/dev/null 2>&1; then
+  flywheel-brownfield-preflight --quiet || true
+fi
+: "${FW_BROWNFIELD_PREFLIGHT_FILE:=planning/BROWNFIELD_PREFLIGHT.md}"
+
 echo "╔════════════════════════════════════════════════════════════════╗"
 echo "║          COMPETITIVE PLAN GENERATION                          ║"
 echo "║   2x Opus + 1x Codex (xhigh) + 1x GPT-5.2 (xhigh) + 1x Gemini ║"
@@ -26,6 +34,10 @@ mkdir -p planning/competing
 prompt_file=$(mktemp)
 mvp_prompt_file=$(mktemp)
 context_excerpt=$(head -c 15000 "$context_file")
+preflight_excerpt=""
+if [[ -f "$FW_BROWNFIELD_PREFLIGHT_FILE" ]]; then
+  preflight_excerpt=$(head -c 12000 "$FW_BROWNFIELD_PREFLIGHT_FILE")
+fi
 
 # Write base prompt
 cat > "$prompt_file" << PROMPT_EOF
@@ -43,6 +55,9 @@ REQUIREMENTS FOR THE PLAN:
 
 PROJECT CONTEXT:
 $context_excerpt
+
+BROWNFIELD PREFLIGHT CONTEXT:
+$preflight_excerpt
 
 ---
 

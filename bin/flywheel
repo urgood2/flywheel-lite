@@ -99,6 +99,16 @@ sanitize_session_name() {
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing: $1"; }
 
+ensure_brownfield_preflight() {
+  local root; root="$(git_root)" || die "Not in a git repo."
+  load_config "$root"
+  if command -v flywheel-brownfield-preflight >/dev/null 2>&1; then
+    (cd "$root" && flywheel-brownfield-preflight --quiet "$@") || note "Warning: brownfield preflight failed"
+  else
+    note "Warning: flywheel-brownfield-preflight not found (skipping brownfield preflight)"
+  fi
+}
+
 usage() {
   cat >&2 <<'USAGE'
 flywheel — oh-my-opencode style workflow on Agent Flywheel
@@ -107,6 +117,7 @@ Usage:
   flywheel doctor
   flywheel checkout <branch> [base]
   flywheel init
+  flywheel preflight [--refresh]                # Generate/refresh brownfield preflight context
   flywheel plan [--rounds N]
   flywheel refine [--max N] [--plan FILE]     # Approval mode (default), tmux session
   flywheel refine --iters N                  # Fixed iterations mode (legacy)
@@ -194,6 +205,8 @@ plan_session() {
   local rounds="${1:-$FW_INTERVIEW_ROUNDS}"
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   cd "$root"
+  ensure_brownfield_preflight
+  local preflight_file="${FW_BROWNFIELD_PREFLIGHT_FILE:-planning/BROWNFIELD_PREFLIGHT.md}"
   note "Spawning planning session: $session"
   
   # Always create session detached first, then add agents
@@ -207,7 +220,7 @@ plan_session() {
   ntm add "$session" --cc=1 || note "Warning: could not add Claude agent"
   
   sleep 3
-  ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. Run ${rounds} interview rounds, then write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
+  ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. First read ${preflight_file} (brownfield baseline). Use it to ground decisions in existing architecture and constraints. Then run ${rounds} interview rounds, and write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
   note "Attaching..."
   smart_attach "$session"
 }
@@ -231,6 +244,7 @@ _refine_loop() {
   : "${FW_GPT_PLAN_MODEL:=gpt-5.3}" "${FW_CODEX_REASONING:=high}"
   
   mkdir -p planning .flywheel
+  local preflight_file="${FW_BROWNFIELD_PREFLIGHT_FILE:-planning/BROWNFIELD_PREFLIGHT.md}"
   
   local prev="$plan_in"
   local i="$start_iter"
@@ -269,6 +283,8 @@ EOF
         --output-last-message "$verdict_file" \
         "Review this engineering plan file: ${prev}
 
+Also read ${preflight_file} if it exists and ensure the plan integrates with current brownfield architecture (avoid greenfield rewrites unless explicitly justified).
+
 Your task:
 1. Check for: specificity, testability, parallelizability, completeness, clarity
 2. If the plan is EXCELLENT and ready for implementation, output ONLY: APPROVED
@@ -297,7 +313,7 @@ Be strict. Only approve if the plan is truly implementation-ready."; then
       if ! codex exec --model "$FW_GPT_PLAN_MODEL" \
         --config "model_reasoning_effort=\"${FW_CODEX_REASONING}\"" \
         --output-last-message "$next" \
-        "Read ${prev}. Rewrite into an improved engineering plan with better specificity, testability, and parallelizability. CRITICAL: Preserve ALL sections, tasks, and details from the original - do not omit or summarize anything. Only add clarity, fix issues, or expand where needed. Markdown only."; then
+        "Read ${prev}. Also read ${preflight_file} if it exists and keep compatibility with existing code architecture. Rewrite into an improved engineering plan with better specificity, testability, and parallelizability. CRITICAL: Preserve ALL sections, tasks, and details from the original - do not omit or summarize anything. Only add clarity, fix issues, or expand where needed. Markdown only."; then
         echo ""
         echo "ERROR: Iteration $i failed!"
         echo "State saved. Restart with: flywheel refine"
@@ -351,6 +367,7 @@ refine_plan() {
     esac
   done
   cd "$root"
+  ensure_brownfield_preflight
   
   local session="refine-$(sanitize_session_name "$(basename "$root")")"
   local start_iter=1
@@ -415,6 +432,8 @@ make_beads() {
     esac
   done
   cd "$root"
+  ensure_brownfield_preflight
+  local preflight_file="${FW_BROWNFIELD_PREFLIGHT_FILE:-planning/BROWNFIELD_PREFLIGHT.md}"
   [[ -f "$plan" ]] || die "Missing: $plan"
   bd init 2>/dev/null || true
 
@@ -429,7 +448,7 @@ make_beads() {
     return 0
   fi
 
-  local prompt="OK so now read ALL of ${plan}; please take ALL of that and elaborate on it and use it to create a comprehensive and granular set of beads for all this with tasks, subtasks, and dependency structure overlaid, with detailed comments so the whole thing is totally self-contained and self-documenting (including relevant background, reasoning/justification, considerations, etc.-- anything we would want our future self to know about the goals and intentions and thought process and how it serves the over-arching goals of the project.).
+  local prompt="OK so now read ALL of ${plan} and ${preflight_file} (if present); please take ALL of that and elaborate on it and use it to create a comprehensive and granular set of beads for all this with tasks, subtasks, and dependency structure overlaid, with detailed comments so the whole thing is totally self-contained and self-documenting (including relevant background, reasoning/justification, considerations, etc.-- anything we would want our future self to know about the goals and intentions and thought process and how it serves the over-arching goals of the project.).
 
 The beads should be so detailed that we never need to consult back to the original markdown plan document.
 
@@ -871,12 +890,13 @@ main() {
     checkout) checkout_branch "$@";;
     init) init_repo;;
     clean) clean_planning;;
+    preflight) if command -v flywheel-brownfield-preflight >/dev/null 2>&1; then flywheel-brownfield-preflight "$@"; else die "Missing: flywheel-brownfield-preflight"; fi;;
     plan) local r=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; *) die "Unknown: $1";; esac; done; plan_session "${r:-}";;
     refine) refine_plan "$@";;
     beads) make_beads "$@";;
     compete) compete_plans;;
-    plan-pro) local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}" ${p:+--plan "$p"};;
-    polish) local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
+    plan-pro) ensure_brownfield_preflight; local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}" ${p:+--plan "$p"};;
+    polish) ensure_brownfield_preflight; local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
     startwork) startwork "$@";;
     add-commit) add_commit_agent;;
     add-watchdog) add_watchdog "$@";;
@@ -897,6 +917,7 @@ compete_plans() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
   cd "$root"
+  ensure_brownfield_preflight
   mkdir -p planning/competing
   
   local context_file="planning/PLAN_v0.md"

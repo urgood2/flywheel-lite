@@ -47,9 +47,18 @@ PROJECT_DIR="$(pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 PLANNING_DIR="$PROJECT_DIR/planning"
 STATE_FILE="$PROJECT_DIR/.flywheel/plan-pro-state.json"
+[[ -f "$HOME/.config/flywheel/config.env" ]] && source "$HOME/.config/flywheel/config.env"
+[[ -f "$PROJECT_DIR/.flywheel/config.env" ]] && source "$PROJECT_DIR/.flywheel/config.env"
+: "${FW_BROWNFIELD_PREFLIGHT_FILE:=planning/BROWNFIELD_PREFLIGHT.md}"
+PREFLIGHT_FILE="$PROJECT_DIR/$FW_BROWNFIELD_PREFLIGHT_FILE"
+
 
 # If not inner loop, handle tmux session management
 if [[ "$INNER_LOOP" != "true" ]]; then
+    if command -v flywheel-brownfield-preflight >/dev/null 2>&1; then
+        flywheel-brownfield-preflight --quiet || true
+    fi
+
     session="plan-pro-$(sanitize_session_name "$PROJECT_NAME")"
 
     # Check for existing session
@@ -242,6 +251,13 @@ standalone document I can save directly.
 
     # Combine prompt + plan for clipboard
     CLIPBOARD_CONTENT="${GPT_PROMPT}$(cat "$CURRENT_PLAN")"
+    if [[ -f "$PREFLIGHT_FILE" ]]; then
+        CLIPBOARD_CONTENT="${CLIPBOARD_CONTENT}
+
+BROWNFIELD PREFLIGHT CONTEXT:
+$(cat "$PREFLIGHT_FILE")"
+    fi
+
 
     if clipboard_copy_content "$CLIPBOARD_CONTENT"; then
         echo -e "${GREEN}✓ Prompt + Plan copied to clipboard!${NC}"
@@ -290,6 +306,8 @@ standalone document I can save directly.
 
     # Create integration prompt
     INTEGRATE_PROMPT="Read the current plan at $CURRENT_PLAN and integrate the following GPT Pro revisions.
+Also read brownfield preflight context at $PREFLIGHT_FILE if present, and planning/BROWNFIELD_REPOMIX.md if present, and keep compatibility with existing architecture.
+
 Save the integrated plan as $NEW_PLAN.
 
 Use ultrathink. Be meticulous. At the end, tell me which changes you wholeheartedly agree with,

@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+note() { [[ "${QUIET:-0}" == "1" ]] || echo "==> $*" >&2; }
+
+git_root() { git rev-parse --show-toplevel 2>/dev/null || return 1; }
+
+usage() {
+  cat >&2 <<'USAGE'
+flywheel-brownfield-preflight
+
+Generate/reuse a cached brownfield preflight file for planning workflows.
+
+Usage:
+  flywheel-brownfield-preflight [--refresh] [--quiet]
+
+Config (optional):
+  FW_BROWNFIELD_PREFLIGHT_FILE=planning/BROWNFIELD_PREFLIGHT.md
+  FW_BROWNFIELD_PREFLIGHT_MAX_AGE_HOURS=24
+  FW_BROWNFIELD_USE_REPOMIX=1
+  FW_BROWNFIELD_REPOMIX_FILE=planning/BROWNFIELD_REPOMIX.md
+  FW_BROWNFIELD_REPOMIX_INCLUDE=<glob,glob,...>
+USAGE
+}
+
+REFRESH=0
+QUIET=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --refresh) REFRESH=1; shift;;
+    --quiet) QUIET=1; shift;;
+    -h|--help) usage; exit 0;;
+    *) die "Unknown arg: $1";;
+  esac
+done
+
+ROOT="$(git_root)" || die "Not in a git repo"
+
+# Load global + repo-local config
+[[ -f "$HOME/.config/flywheel/config.env" ]] && source "$HOME/.config/flywheel/config.env"
+[[ -f "$ROOT/.flywheel/config.env" ]] && source "$ROOT/.flywheel/config.env"
+
+: "${FW_BROWNFIELD_PREFLIGHT_FILE:=planning/BROWNFIELD_PREFLIGHT.md}"
+: "${FW_BROWNFIELD_PREFLIGHT_MAX_AGE_HOURS:=24}"
+: "${FW_BROWNFIELD_USE_REPOMIX:=1}"
+: "${FW_BROWNFIELD_REPOMIX_FILE:=planning/BROWNFIELD_REPOMIX.md}"
+: "${FW_BROWNFIELD_REPOMIX_INCLUDE:=src/**,include/**,scripts/**,docs/**,tests/**,planning/**,*.md,*.lua,*.cpp,*.hpp,*.h,*.c,*.py,*.ts,*.js,*.json,*.toml,*.yaml,*.yml,CMakeLists.txt,Makefile,package.json,pyproject.toml,go.mod,Cargo.toml}"
+
+PREFLIGHT_PATH="$ROOT/$FW_BROWNFIELD_PREFLIGHT_FILE"
+REPOMIX_PATH="$ROOT/$FW_BROWNFIELD_REPOMIX_FILE"
+
+needs_refresh=0
+if [[ "$REFRESH" == "1" || ! -f "$PREFLIGHT_PATH" ]]; then
+  needs_refresh=1
+else
+  now=$(date +%s)
+  mtime=$(stat -c %Y "$PREFLIGHT_PATH" 2>/dev/null || echo 0)
+  age_h=$(( (now - mtime) / 3600 ))
+  if (( age_h >= FW_BROWNFIELD_PREFLIGHT_MAX_AGE_HOURS )); then
+    needs_refresh=1
+  fi
+fi
+
+if [[ "$needs_refresh" != "1" ]]; then
+  note "Brownfield preflight is current: $FW_BROWNFIELD_PREFLIGHT_FILE"
+  exit 0
+fi
+
+cd "$ROOT"
+mkdir -p "$(dirname "$PREFLIGHT_PATH")" ".flywheel"
+
+note "Generating brownfield preflight: $FW_BROWNFIELD_PREFLIGHT_FILE"
+
+branch=$(git rev-parse --abbrev-ref HEAD)
+head=$(git rev-parse --short HEAD)
+status_short=$(git status --short | sed -n '1,120p')
+[[ -n "$status_short" ]] || status_short="(clean)"
+recent_commits=$(git log --oneline -n 15)
+
+# Heuristic manifests + entry points
+manifests=$(rg --files -g 'AGENTS.md' -g 'README*' -g 'package.json' -g 'pyproject.toml' -g 'go.mod' -g 'Cargo.toml' -g 'CMakeLists.txt' -g 'Makefile' -g 'Justfile' 2>/dev/null | sed -n '1,120p')
+[[ -n "$manifests" ]] || manifests="(none found)"
+
+top_dirs=$(find . -maxdepth 2 -type d | sed 's#^\./##' | sed '/^\.$/d' | sort | sed -n '1,120p')
+
+# Candidate test/build commands
+cmd_hints=""
+if [[ -f package.json ]] && command -v jq >/dev/null 2>&1; then
+  npm_cmds=$(jq -r '.scripts // {} | to_entries[] | select(.key|test("test|lint|build|check|verify")) | "- npm run " + .key' package.json 2>/dev/null || true)
+  [[ -n "$npm_cmds" ]] && cmd_hints+=$'\n'"$npm_cmds"
+fi
+if [[ -f Makefile ]]; then
+  mk_targets=$(rg -n '^(test|check|lint|build|verify|all):' Makefile 2>/dev/null | sed 's/:.*$//' | sed 's/^/- make /' | sed -n '1,30p' || true)
+  [[ -n "$mk_targets" ]] && cmd_hints+=$'\n'"$mk_targets"
+fi
+if [[ -f CMakeLists.txt ]]; then
+  cmd_hints+=$'\n- cmake -S . -B build\n- cmake --build build\n- ctest --test-dir build --output-on-failure'
+fi
+[[ -n "$cmd_hints" ]] || cmd_hints="- (Add project-specific verify commands here)"
+
+# Optional Repomix capture
+repomix_status="not requested"
+if [[ "$FW_BROWNFIELD_USE_REPOMIX" == "1" ]]; then
+  note "Generating repomix snapshot: $FW_BROWNFIELD_REPOMIX_FILE"
+  mkdir -p "$(dirname "$REPOMIX_PATH")"
+  if command -v repomix >/dev/null 2>&1; then
+    if repomix . --quiet --style markdown --compress --no-git-sort-by-changes --top-files-len 20 --output "$REPOMIX_PATH" --include "$FW_BROWNFIELD_REPOMIX_INCLUDE"; then
+      repomix_status="generated via repomix binary"
+    else
+      repomix_status="failed (repomix binary)"
+    fi
+  elif command -v npx >/dev/null 2>&1; then
+    if npx -y repomix . --quiet --style markdown --compress --no-git-sort-by-changes --top-files-len 20 --output "$REPOMIX_PATH" --include "$FW_BROWNFIELD_REPOMIX_INCLUDE"; then
+      repomix_status="generated via npx repomix"
+    else
+      repomix_status="failed (npx repomix)"
+    fi
+  else
+    repomix_status="skipped (repomix not installed)"
+  fi
+else
+  repomix_status="disabled (FW_BROWNFIELD_USE_REPOMIX=0)"
+fi
+
+repomix_size="0"
+if [[ -f "$REPOMIX_PATH" ]]; then
+  repomix_size=$(wc -c < "$REPOMIX_PATH" 2>/dev/null || echo 0)
+fi
+
+cat > "$PREFLIGHT_PATH" <<'PREFLIGHT'
+# Brownfield Preflight
+
+This file is generated by `flywheel-brownfield-preflight` and reused by `plan/refine/plan-pro/compete/beads/polish`.
+
+## Metadata
+PREFLIGHT
+
+{
+  echo "- GeneratedAt: $(date -Iseconds)"
+  echo "- RepoRoot: $ROOT"
+  echo "- Branch: $branch"
+  echo "- Head: $head"
+  echo "- Dirty: $( [[ -n "$(git status --porcelain)" ]] && echo yes || echo no )"
+  echo ""
+  echo "## Working Tree Snapshot"
+  echo '```text'
+  echo "$status_short"
+  echo '```'
+  echo ""
+  echo "## Recent Commits"
+  echo '```text'
+  echo "$recent_commits"
+  echo '```'
+  echo ""
+  echo "## Repo Surface (Top-Level / Depth 2 Dirs)"
+  echo '```text'
+  echo "$top_dirs"
+  echo '```'
+  echo ""
+  echo "## Key Manifests / Entry Files"
+  echo '```text'
+  echo "$manifests"
+  echo '```'
+  echo ""
+  echo "## Candidate Verification Commands"
+  echo "$cmd_hints"
+  echo ""
+  echo "## Repomix Snapshot"
+  echo "- Status: $repomix_status"
+  echo "- File: $FW_BROWNFIELD_REPOMIX_FILE"
+  echo "- Bytes: $repomix_size"
+  echo ""
+  echo "## Brownfield Guardrails"
+  echo "- Do not propose greenfield rewrites when extension/refactor is feasible."
+  echo "- Map every planned task to existing files/modules before implementation."
+  echo "- Include migration/risk/testing steps for changed runtime behavior."
+} >> "$PREFLIGHT_PATH"
+
+note "Preflight ready: $FW_BROWNFIELD_PREFLIGHT_FILE"
+[[ -f "$REPOMIX_PATH" ]] && note "Repomix ready: $FW_BROWNFIELD_REPOMIX_FILE ($(wc -c < "$REPOMIX_PATH") bytes)"
