@@ -31,10 +31,11 @@ PLAN_INPUT=""
 MAX_ROUNDS="${1:-3}"
 INNER_LOOP=false
 START_ROUND=1
+PLAN_EXPLICIT=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --plan) PLAN_INPUT="$2"; shift 2;;
+        --plan) PLAN_INPUT="$2"; PLAN_EXPLICIT=true; shift 2;;
         --rounds) MAX_ROUNDS="$2"; shift 2;;
         --_inner) INNER_LOOP=true; shift;;
         --_start-round) START_ROUND="$2"; shift 2;;
@@ -63,29 +64,38 @@ if [[ "$INNER_LOOP" != "true" ]]; then
 
     # Check for existing session
     if tmux has-session -t "$session" 2>/dev/null; then
-        note "Plan-pro session already running: $session"
-        note "Attaching... (Ctrl+B D to detach)"
-        sleep 1
-        smart_attach "$session"
-        exit 0
+        if [[ "$PLAN_EXPLICIT" == "true" ]]; then
+            note "Plan file explicitly provided. Restarting existing session to use: $PLAN_INPUT"
+            tmux kill-session -t "$session" 2>/dev/null || true
+        else
+            note "Plan-pro session already running: $session"
+            note "Attaching... (Ctrl+B D to detach)"
+            sleep 1
+            smart_attach "$session"
+            exit 0
+        fi
     fi
 
     # Check for saved state to resume
     mkdir -p "$(dirname "$STATE_FILE")"
     if [[ -f "$STATE_FILE" ]]; then
-        status=$(grep -oP '"status":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
-        if [[ "$status" == "in_progress" ]]; then
-            saved_round=$(grep -oP '"round":\s*\K[0-9]+' "$STATE_FILE" 2>/dev/null || echo "0")
-            saved_plan=$(grep -oP '"current_plan":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
-            if [[ "$saved_round" -gt 0 ]]; then
-                note "Found interrupted plan-pro at round $saved_round"
-                START_ROUND=$((saved_round))
-                [[ -n "$saved_plan" && -f "$saved_plan" ]] && PLAN_INPUT="$saved_plan"
-                note "Resuming from round $START_ROUND"
+        if [[ "$PLAN_EXPLICIT" == "true" ]]; then
+            note "Ignoring saved plan-pro resume state because --plan was explicitly provided."
+        else
+            status=$(grep -oP '"status":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
+            if [[ "$status" == "in_progress" ]]; then
+                saved_round=$(grep -oP '"round":\s*\K[0-9]+' "$STATE_FILE" 2>/dev/null || echo "0")
+                saved_plan=$(grep -oP '"current_plan":\s*"\K[^"]*' "$STATE_FILE" 2>/dev/null || echo "")
+                if [[ "$saved_round" -gt 0 ]]; then
+                    note "Found interrupted plan-pro at round $saved_round"
+                    START_ROUND=$((saved_round))
+                    [[ -n "$saved_plan" && -f "$saved_plan" ]] && PLAN_INPUT="$saved_plan"
+                    note "Resuming from round $START_ROUND"
+                fi
+            elif [[ "$status" == "complete" ]]; then
+                note "Previous plan-pro completed. Starting fresh."
+                rm -f "$STATE_FILE"
             fi
-        elif [[ "$status" == "complete" ]]; then
-            note "Previous plan-pro completed. Starting fresh."
-            rm -f "$STATE_FILE"
         fi
     fi
 

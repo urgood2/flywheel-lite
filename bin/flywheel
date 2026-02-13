@@ -895,7 +895,7 @@ main() {
     refine) refine_plan "$@";;
     beads) make_beads "$@";;
     compete) compete_plans;;
-    plan-pro) ensure_brownfield_preflight; local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-plan-pro "${r:-3}" ${p:+--plan "$p"};;
+    plan-pro) ensure_brownfield_preflight; local r="" p=""; while [[ $# -gt 0 ]]; do case "$1" in --rounds) r="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; local args=("${r:-3}"); [[ -n "$p" ]] && args+=(--plan "$p"); flywheel-plan-pro "${args[@]}";;
     polish) ensure_brownfield_preflight; local m=""; local p=""; while [[ $# -gt 0 ]]; do case "$1" in --max) m="$2"; shift 2;; --plan) p="$2"; shift 2;; *) die "Unknown: $1";; esac; done; flywheel-polish "${m:-9}" "${p:-planning/PLAN.md}";;
     startwork) startwork "$@";;
     add-commit) add_commit_agent;;
