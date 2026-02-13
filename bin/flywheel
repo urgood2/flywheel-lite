@@ -220,7 +220,7 @@ plan_session() {
   ntm add "$session" --cc=1 || note "Warning: could not add Claude agent"
   
   sleep 3
-  ntm send "$session" --no-cass-check --all "You are the INTERVIEWER. First read ${preflight_file} (brownfield baseline). Use it to ground decisions in existing architecture and constraints. Then run ${rounds} interview rounds, and write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
+  ntm send "$session" --no-cass-check --skip-first "You are the INTERVIEWER. First read ${preflight_file} as the brownfield baseline. Use it to ground decisions in existing architecture and constraints. Then run ${rounds} interview rounds, and write planning/INTERVIEW_TRANSCRIPT.md and planning/PLAN_v0.md." || true
   note "Attaching..."
   smart_attach "$session"
 }
@@ -455,10 +455,10 @@ The beads should be so detailed that we never need to consult back to the origin
 Remember to ONLY use the bd/br tool to create and modify the beads and add the dependencies.
 
 Use these commands:
-- br add -t epic -p P1 'Epic Title' 'Epic description with full context'
-- br add -t task -p P1 'Task Title' 'Detailed acceptance criteria and context'
+- br create --type epic --priority P1 --title 'Epic Title' --description 'Epic description with full context'
+- br create --type task --priority P1 --title 'Task Title' --description 'Detailed acceptance criteria and context'
 - br update <id> --parent <epic-id>
-- br dep add <id> --blocked-by <other-id>
+- br dep add <id> <other-id> --type blocks
 
 Create at least ${min_beads} beads. When done, run: bv --robot-triage
 Then say BEADS_COMPLETE."
