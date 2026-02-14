@@ -225,6 +225,25 @@ plan_session() {
   smart_attach "$session"
 }
 
+
+# Find the best (newest) plan file from all known plan locations
+find_best_plan() {
+  local root="$1"
+  local best=""
+  # Use find to avoid bash glob errors when patterns have no matches
+  best=$(find "$root/planning" -maxdepth 1 -type f \( \
+    -name "PLAN.md" -o \
+    -name "PLAN_v*.md" -o \
+    -name "PLAN_codex_iter*.md" -o \
+    -name "PLAN_synthesized.md" \
+  \) -printf "%T@ %p\n" 2>/dev/null | sort -rn | head -1 | cut -d" " -f2-)
+  if [[ -n "$best" ]]; then
+    # Return path relative to root
+    echo "${best#$root/}"
+  else
+    echo ""
+  fi
+}
 find_latest_iter() {
   local root="$1"
   local latest=$(ls -t "$root/planning/PLAN_codex_iter"*.md 2>/dev/null | head -1)
@@ -355,12 +374,12 @@ EOF
 refine_plan() {
   local root; root="$(git_root)" || die "Not in a git repo."
   load_config "$root"
-  local max_iters="${FW_PLAN_ITERS:-10}" plan_in="planning/PLAN_v0.md" until_approved=true
+  local max_iters="${FW_PLAN_ITERS:-10}" plan_in="" plan_explicit=false until_approved=true
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --iters) max_iters="$2"; until_approved=false; shift 2;;
       --max) max_iters="$2"; shift 2;;
-      --plan) plan_in="$2"; shift 2;;
+      --plan) plan_in="$2"; plan_explicit=true; shift 2;;
       --no-approve) until_approved=false; shift;;
       --_loop) shift; _refine_loop "$@"; return;;
       *) die "Unknown: $1";;
@@ -400,6 +419,14 @@ refine_plan() {
     fi
   fi
   
+  # Auto-detect best plan if none explicitly provided
+  if [[ -z "$plan_in" ]]; then
+    plan_in=$(find_best_plan "$root")
+    if [[ -z "$plan_in" ]]; then
+      die "No plan files found in planning/. Run flywheel plan or plan-pro first."
+    fi
+    note "Auto-selected newest plan: $plan_in"
+  fi
   [[ -f "$plan_in" ]] || die "Missing: $plan_in"
   
   note "Starting refine session: $session"
@@ -408,7 +435,12 @@ refine_plan() {
   else
     note "Mode: FIXED ($max_iters iterations)"
   fi
-  note "Input: $plan_in"
+  note "Input: $plan_in ($(wc -l < "$plan_in") lines, $(du -h "$plan_in" | cut -f1))"
+  echo ""
+  note "Plan preview:"
+  echo "  ────────────────────────────────────"
+  head -15 "$plan_in" | sed "s/^/  /"
+  echo "  ────────────────────────────────────"
   echo ""
   note "Detach: Ctrl+B D | Reattach: flywheel attach"
   echo ""
