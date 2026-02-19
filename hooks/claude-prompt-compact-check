@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# UserPromptSubmit hook: if context was just compacted, inject recovery instructions.
+# One-shot: fires once after compaction, then deletes the marker.
+# Part of the flywheel post-compact recovery system.
+set -euo pipefail
+MARKER="${HOME}/.local/state/claude-compact-reminder/compact-pending"
+[[ -f "$MARKER" ]] || exit 0
+
+# Remove marker first (one-shot)
+rm -f "$MARKER"
+
+cat << 'RECOVERY'
+CONTEXT COMPACTED — RECOVERY REQUIRED.
+You lost your session context. Before doing ANYTHING else:
+1. Read AGENTS.md in the current project root (cat AGENTS.md)
+2. Run: bd list --status in_progress --type task --limit 5
+   — if you had a task in progress, continue it
+3. Run: am whoami 2>/dev/null || true
+   — verify your Agent Mail identity is intact
+4. Then CONTINUE WORKING. Do NOT ask questions. Do NOT stop.
+RECOVERY

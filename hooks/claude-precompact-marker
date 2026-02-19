@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Pre-compact hook: drops a marker so the next prompt can detect compaction.
+# Part of the flywheel post-compact recovery system.
+set -euo pipefail
+STATE_DIR="${HOME}/.local/state/claude-compact-reminder"
+mkdir -p "$STATE_DIR"
+date +%s > "${STATE_DIR}/compact-pending"

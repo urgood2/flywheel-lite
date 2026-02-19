@@ -835,16 +835,57 @@ nudge_agents() {
   load_config "$root"
   local session; session="$(sanitize_session_name "$(basename "$root")")"
   local force=false
+  local triage_file=""
   local now_ts
   now_ts=$(date +%s)
   local review_nudge_dir="$HOME/.cache/flywheel/review-nudges"
   mkdir -p "$review_nudge_dir"
-  [[ "${1:-}" == "--force" ]] && force=true
-  
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=true; shift;;
+      --triage-file) triage_file="$2"; shift 2;;
+      *) shift;;
+    esac
+  done
+
+  # ── Pre-compute triage dispatch table ──────────────────────────
+  # Extract actionable non-epic tasks scored by dependency impact.
+  # Each idle worker gets a unique assignment; no two panes get the same task.
+  local -a triage_ids=() triage_titles=() triage_unblocks=()
+  if [[ -n "$triage_file" && -f "$triage_file" ]]; then
+    local jq_filter='
+      [.triage.recommendations // []
+       | .[]
+       | select(.type == "task" or .type == "bug")
+       | select((.blocked_by // [] | length) == 0)
+       | select(.status == "open")]
+      | .[0:10]
+      | .[]
+      | [.id, .title, (.unblocks_ids // [] | length | tostring)]
+      | @tsv'
+    local triage_tsv
+    triage_tsv=$(jq -r "$jq_filter" "$triage_file" 2>/dev/null) || triage_tsv=""
+
+    while IFS=$'	' read -r tid ttitle tunblocks; do
+      [[ -n "$tid" ]] || continue
+      triage_ids+=("$tid")
+      triage_titles+=("$ttitle")
+      triage_unblocks+=("$tunblocks")
+    done <<< "$triage_tsv"
+
+    if [[ ${#triage_ids[@]} -gt 0 ]]; then
+      note "Triage dispatch: ${#triage_ids[@]} actionable tasks ranked by impact"
+    fi
+  fi
+
+  local assign_idx=0
+
   note "Checking agents in session: $session"
   local nudged=0 skipped=0
   set +e
-  
+
   for pane in $(tmux list-panes -t "$session" -F '#{pane_index}' 2>/dev/null | tail -n +2); do
     local pane_title
     pane_title=$(tmux display-message -t "${session}:1.${pane}" -p '#{pane_title}' 2>/dev/null) || continue
@@ -893,14 +934,39 @@ nudge_agents() {
         fi
       fi
 
-      note "  Nudging pane $pane ($pane_title)"
-      # Different nudge messages based on agent type
-      local nudge_msg="CONTINUE. Task selection order: run bd list --status in_progress --type task --limit 10 and continue one; if none run bd ready --type task --limit 10 and claim one; if still none run bd ready --type bug --limit 10 and claim one. Do NOT claim epics via bv --robot-next."
+      # ── Build nudge message ────────────────────────────────────
+      local nudge_msg
+
       if [[ "$is_review" == true ]]; then
+        # Review agent: unchanged
         nudge_msg="CONTINUE reviewing. Run: br list --status=closed | head -10 to find recently closed beads, then review them. Create beads for any issues found. Do NOT edit files."
-      elif [[ "$pane_title" == *"cod"* ]]; then
-        nudge_msg="You are an autonomous coding agent. Run bd list --status in_progress --type task --limit 10 and continue one task. If none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress. If still none, run bd ready --type bug --limit 10 and claim one with bd update <ID> --status in_progress. Do NOT claim epics via bv --robot-next. Do NOT wait for confirmation - just code."
+
+      elif [[ ${#triage_ids[@]} -gt 0 && $assign_idx -lt ${#triage_ids[@]} ]]; then
+        # ── Dispatch mode: assign a specific scored task ─────────
+        local t_id="${triage_ids[$assign_idx]}"
+        local t_title="${triage_titles[$assign_idx]}"
+        local t_unblocks="${triage_unblocks[$assign_idx]}"
+        assign_idx=$((assign_idx + 1))
+
+        local unblock_note=""
+        [[ "$t_unblocks" -gt 0 ]] 2>/dev/null && unblock_note=" (unblocks ${t_unblocks} downstream task(s) — high impact)"
+
+        if [[ "$pane_title" == *"cod"* ]]; then
+          nudge_msg="You are an autonomous coding agent. First: run bd list --status in_progress --type task --limit 5 — if you have one in progress, continue it. Otherwise your assigned task is ${t_id}: \"${t_title}\"${unblock_note}. Claim: bd update ${t_id} --status in_progress. Then: bd show ${t_id} for full spec. Implement fully, verify, then bd update ${t_id} --status closed. Do NOT wait for confirmation - just code."
+        else
+          nudge_msg="CONTINUE. First: run bd list --status in_progress --type task --limit 5 — if you have one in progress, continue it. Otherwise your assigned task is ${t_id}: \"${t_title}\"${unblock_note}. Claim: bd update ${t_id} --status in_progress. Then: bd show ${t_id} for full spec. Implement fully, verify, then bd update ${t_id} --status closed."
+        fi
+        note "  Dispatching pane $pane → ${t_id}${unblock_note}"
+
+      else
+        # ── Fallback: generic nudge (no triage data or exhausted) ─
+        if [[ "$pane_title" == *"cod"* ]]; then
+          nudge_msg="You are an autonomous coding agent. Run bd list --status in_progress --type task --limit 10 and continue one task. If none, run bd ready --type task --limit 10 and claim one with bd update <ID> --status in_progress. If still none, run bd ready --type bug --limit 10 and claim one with bd update <ID> --status in_progress. Do NOT claim epics via bv --robot-next. Do NOT wait for confirmation - just code."
+        else
+          nudge_msg="CONTINUE. Task selection order: run bd list --status in_progress --type task --limit 10 and continue one; if none run bd ready --type task --limit 10 and claim one; if still none run bd ready --type bug --limit 10 and claim one. Do NOT claim epics via bv --robot-next."
+        fi
       fi
+
       tmux send-keys -t "${session}:1.${pane}" "$nudge_msg"
       sleep 0.3
       tmux send-keys -t "${session}:1.${pane}" Enter
@@ -914,11 +980,11 @@ nudge_agents() {
       skipped=$((skipped + 1))
     fi
   done
-  
+
   set -e
   note "Nudged: $nudged | Skipped: $skipped"
+  [[ $assign_idx -gt 0 ]] && note "Dispatched: $assign_idx task(s) via triage"
 }
-
 
 main() {
   local cmd="${1:-}"; shift || true

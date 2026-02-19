@@ -3,6 +3,8 @@
 # Default completion: actionable_count == 0 AND triage in_progress == 0
 # Strict completion (FW_COMPLETE_ALL_STATUSES=1): all non-closed statuses are zero
 #   (open + in_progress + blocked + deferred == 0)
+# Triage dispatch: caches bv --robot-triage and passes to nudge for
+# dependency-aware task assignment to idle agents.
 
 set -euo pipefail
 
@@ -13,6 +15,7 @@ MAX_ZERO_CHECKS="${3:-3}"  # Exit after N consecutive done checks
 [[ -n "$SESSION" ]] || { echo "Usage: flywheel-watchdog <session> [interval] [max_zero_checks]"; exit 1; }
 
 STRICT_ALL="${FW_COMPLETE_ALL_STATUSES:-0}"
+TRIAGE_FILE="/tmp/flywheel-triage-${SESSION}.json"
 
 count_status() {
   local status="$1"
@@ -21,6 +24,7 @@ count_status() {
 
 echo "Watchdog started: session=$SESSION interval=${INTERVAL}s"
 echo "Only nudges idle agents (skips working ones)"
+echo "Triage dispatch: ON (assigns scored tasks to idle agents)"
 if [[ "$STRICT_ALL" == "1" ]]; then
   echo "Mode: STRICT_ALL_STATUSES (open+in_progress+blocked+deferred must be 0)"
 else
@@ -45,8 +49,11 @@ while true; do
 
   cd "$REPO_ROOT" 2>/dev/null || true
 
-  ACTIONABLE=$(bv --robot-triage 2>/dev/null | jq -r ".triage.quick_ref.actionable_count // 0" 2>/dev/null || echo "0")
-  TRIAGE_IN_PROGRESS=$(bv --robot-triage 2>/dev/null | jq -r ".triage.quick_ref.in_progress_count // 0" 2>/dev/null || echo "0")
+  # Cache triage once per cycle (was called twice before)
+  bv --robot-triage 2>/dev/null > "$TRIAGE_FILE" || echo '{}' > "$TRIAGE_FILE"
+
+  ACTIONABLE=$(jq -r ".triage.quick_ref.actionable_count // 0" "$TRIAGE_FILE" 2>/dev/null || echo "0")
+  TRIAGE_IN_PROGRESS=$(jq -r ".triage.quick_ref.in_progress_count // 0" "$TRIAGE_FILE" 2>/dev/null || echo "0")
 
   OPEN_COUNT=$(count_status open)
   INPROG_COUNT=$(count_status in_progress)
@@ -84,6 +91,7 @@ while true; do
       flywheel finalize 2>&1 || true
       echo ""
       echo "Watchdog exiting. Session still running for review."
+      rm -f "$TRIAGE_FILE"
       exit 0
     fi
   else
@@ -91,9 +99,9 @@ while true; do
     echo "$(date +%H:%M:%S) Checking for idle agents..."
     if [[ "$STRICT_ALL" == "1" && "$NON_CLOSED" -gt 0 && "$ACTIONABLE" -eq 0 ]]; then
       echo "$(date +%H:%M:%S) No actionable beads but non-closed remain; forcing nudge for unblock/closure work."
-      flywheel nudge --force 2>&1 | grep -E "(Nudging|Skipping|Nudged)" || true
+      flywheel nudge --force --triage-file "$TRIAGE_FILE" 2>&1 | grep -E "(Nudging|Skipping|Nudged|Dispatch)" || true
     else
-      flywheel nudge 2>&1 | grep -E "(Nudging|Skipping|Nudged)" || true
+      flywheel nudge --triage-file "$TRIAGE_FILE" 2>&1 | grep -E "(Nudging|Skipping|Nudged|Dispatch)" || true
     fi
   fi
 done
