@@ -856,14 +856,19 @@ nudge_agents() {
       continue
     fi
 
-    # Detect review agent by title or output content
+    # Detect review agent by title, persistent marker, or output content
     local is_review=false
     if [[ "${pane_title,,}" == *"review"* ]]; then
       is_review=true
     fi
+    # Check persistent marker: if a review timestamp file exists for this pane,
+    # it was previously identified as a reviewer and should stay one.
+    if [[ "$is_review" == false ]] && [[ -f "${review_nudge_dir}/${session}-pane${pane}.ts" ]]; then
+      is_review=true
+    fi
     if [[ "$is_review" == false ]]; then
       local pane_output
-      pane_output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -50 2>/dev/null) || pane_output=""
+      pane_output=$(tmux capture-pane -t "${session}:1.${pane}" -p -S -200 2>/dev/null) || pane_output=""
       if [[ "$pane_output" == *"REVIEW_AGENT"* ]] || [[ "$pane_output" == *"review closed beads"* ]] || [[ "$pane_output" == *"Read-Only Code Reviewer"* ]]; then
         is_review=true
       fi

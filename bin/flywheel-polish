@@ -13,9 +13,11 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 [[ -f "$PROJECT_DIR/.flywheel/config.env" ]] && source "$PROJECT_DIR/.flywheel/config.env"
 : "${FW_BROWNFIELD_PREFLIGHT_FILE:=planning/BROWNFIELD_PREFLIGHT.md}"
 PREFLIGHT_FILE="$PROJECT_DIR/$FW_BROWNFIELD_PREFLIGHT_FILE"
+echo -e "\033[1;33m⏳ Checking brownfield preflight cache...\033[0m"
 if command -v flywheel-brownfield-preflight >/dev/null 2>&1; then
     flywheel-brownfield-preflight --quiet || true
 fi
+echo -e "\033[0;32m✓ Brownfield preflight ready\033[0m"
 
 
 # Colors
@@ -25,7 +27,66 @@ YELLOW="\033[1;33m"
 BLUE="\033[0;34m"
 CYAN="\033[0;36m"
 BOLD="\033[1m"
+DIM="\033[2m"
 NC="\033[0m"
+
+# Run a command with a spinner, elapsed timer, and periodic bead count heartbeat
+# Usage: run_with_progress <prompt_text> <logfile>
+run_with_progress() {
+    local prompt_text="$1"
+    local logfile="$2"
+
+    echo -e "${DIM}  (tail -f $logfile in another terminal for live output)${NC}"
+    echo
+
+    # Run claude in background, output to logfile
+    echo "$prompt_text" | claude -p --dangerously-skip-permissions > "$logfile" 2>&1 &
+    local pid=$!
+
+    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local start=$SECONDS
+    local i=0
+    local last_bead_check=0
+    local bead_count=""
+    local log_size=""
+
+    # Initial bead count
+    bead_count=$($BEADS_CMD list 2>/dev/null | wc -l || echo "?")
+
+    while kill -0 "$pid" 2>/dev/null; do
+        local elapsed=$(( SECONDS - start ))
+        local mins=$(( elapsed / 60 ))
+        local secs=$(( elapsed % 60 ))
+
+        # Check bead count every 30s
+        if (( elapsed - last_bead_check >= 30 )); then
+            bead_count=$($BEADS_CMD list 2>/dev/null | wc -l || echo "?")
+            last_bead_check=$elapsed
+        fi
+
+        # Show log file size as activity indicator
+        if [[ -f "$logfile" ]]; then
+            log_size=$(du -h "$logfile" 2>/dev/null | cut -f1 | tr -d ' ')
+        fi
+
+        local c="${spin_chars:i%${#spin_chars}:1}"
+        printf "\r  %s ${BOLD}Working...${NC} ${CYAN}%dm %02ds${NC} │ Beads: ${YELLOW}%s${NC} │ Output: ${DIM}%s${NC}   " \
+            "$c" "$mins" "$secs" "$bead_count" "${log_size:-0B}"
+        i=$((i + 1))
+        sleep 0.2
+    done
+
+    wait "$pid" || true
+    local exit_code=$?
+    local total=$(( SECONDS - start ))
+    printf "\r  ✓ ${GREEN}Done in %dm %02ds${NC}                                                        \n" \
+        "$(( total / 60 ))" "$(( total % 60 ))"
+    echo
+
+    # Display the output
+    cat "$logfile"
+    return $exit_code
+}
 
 clear 2>/dev/null || true
 echo -e "${BLUE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
@@ -107,38 +168,38 @@ session_num=1
 
 while true; do
     ((++round))
-    
+
     echo
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${CYAN}  ITERATION $round (Session $session_num)${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
-    
+
     # Show bead count before
     BEFORE_COUNT=$($BEADS_CMD list 2>/dev/null | wc -l || echo "0")
     echo -e "${YELLOW}Beads before: $BEFORE_COUNT${NC}"
     echo
-    
+
     echo -e "${BOLD}Running Claude Code...${NC}"
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
-    
-    # Run claude with the polish prompt
-    echo "$POLISH_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_round_${round}.log"
-    
+
+    # Run claude with progress indicator
+    run_with_progress "$POLISH_PROMPT" "/tmp/polish_round_${round}.log"
+
     echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
     echo
-    
+
     # Show bead count after
     AFTER_COUNT=$($BEADS_CMD list 2>/dev/null | wc -l || echo "0")
     echo -e "${YELLOW}Beads after: $AFTER_COUNT${NC}"
-    
+
     if [[ "$AFTER_COUNT" -ne "$BEFORE_COUNT" ]]; then
         echo -e "${GREEN}Change: $((AFTER_COUNT - BEFORE_COUNT)) beads${NC}"
     else
         echo -e "${YELLOW}No change in bead count (may have modified existing beads)${NC}"
     fi
     echo
-    
+
     # Decision point
     echo -e "${BOLD}────────────────────────────────────────────────────────────────────${NC}"
     echo -e "Completed iteration $round."
@@ -150,7 +211,7 @@ while true; do
     echo
     read -p "Choice [C/F/X/D]: " -n 1 -r
     echo
-    
+
     case "${REPLY^^}" in
         C)
             echo -e "${GREEN}Continuing in same session...${NC}"
@@ -163,17 +224,17 @@ while true; do
             echo
             echo -e "${BOLD}Step 1: Loading fresh context...${NC}"
             echo
-            
-            # Run fresh context prompt
-            echo "$FRESH_CONTEXT_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee "/tmp/polish_fresh_${session_num}.log"
-            
+
+            # Run fresh context prompt with progress
+            run_with_progress "$FRESH_CONTEXT_PROMPT" "/tmp/polish_fresh_${session_num}.log"
+
             echo
             echo -e "${BOLD}Step 2: Re-analyzing beads with fresh eyes...${NC}"
             echo
-            
-            # Run followup prompt
-            echo "$FRESH_FOLLOWUP_PROMPT" | claude -p --dangerously-skip-permissions 2>&1 | tee -a "/tmp/polish_fresh_${session_num}.log"
-            
+
+            # Run followup prompt with progress
+            run_with_progress "$FRESH_FOLLOWUP_PROMPT" "/tmp/polish_fresh_followup_${session_num}.log"
+
             ((++session_num))
             echo -e "${GREEN}Fresh session complete. Now on session $session_num.${NC}"
             ;;
@@ -183,14 +244,14 @@ while true; do
             echo -e "${CYAN}  FINAL PASS WITH CODEX${NC}"
             echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
             echo
-            
+
             if command -v codex &> /dev/null; then
                 echo -e "${BOLD}Running Codex with high reasoning effort...${NC}"
                 echo
                 # Note: codex CLI syntax may vary
                 echo "$POLISH_PROMPT" | codex exec --model gpt-5.2 --config model_reasoning_effort="high" - 2>&1 | tee "/tmp/polish_codex_final.log" || {
                     echo -e "${YELLOW}Codex command failed. Try manually:${NC}"
-                    echo "  codex exec --model gpt-5.2 --config model_reasoning_effort="high" -"
+                    echo "  codex exec --model gpt-5.2 --config model_reasoning_effort=\"high\" -"
                     echo "  Then paste the polish prompt"
                 }
             else
@@ -206,7 +267,7 @@ while true; do
                 echo
                 read -p "Press Enter when Codex pass is complete..."
             fi
-            
+
             echo
             echo -e "${GREEN}Codex final pass complete!${NC}"
             break
